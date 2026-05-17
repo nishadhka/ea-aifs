@@ -422,15 +422,22 @@ def extract_all_fields(zstore, const_fields=None, date=None, member=None):
 
             print(f"    {p}: {len(LEVELS)} levels, shape {list(fields.values())[-1].shape} ({fetch_time:.1f}s)")
         else:
-            # Surface: (time=2, step=1, lat, lon) -> (2, lat, lon)
-            if array.ndim == 4:
+            # Surface: reduce to (time=2, lat, lon)
+            if array.ndim == 4:            # (time, step, lat, lon)
                 fields[p] = array[:, 0, :, :]
-            elif array.ndim == 3:
+            elif array.ndim == 3:          # (time, lat, lon)
                 fields[p] = array
-            elif array.ndim == 2:
+            elif array.ndim == 2:          # (lat, lon)
                 fields[p] = array
+            elif array.ndim == 5:
+                # Defensive guard: a stray ensemble/number axis survived member
+                # extraction, e.g. (time, step, number, lat, lon). Member
+                # parquets are single-member, so index 0 is this member.
+                fields[p] = array[:, 0, 0, :, :]
             else:
-                fields[p] = array.reshape(array.shape[-2:])
+                # Collapse any remaining non-spatial leading dims -> (2, lat, lon)
+                flat = array.reshape(array.shape[0], -1, array.shape[-2], array.shape[-1])
+                fields[p] = flat[:, 0, :, :]
             print(f"    {p}: shape {fields[p].shape} ({fetch_time:.1f}s)")
 
     # Convert gh -> z (geopotential)
