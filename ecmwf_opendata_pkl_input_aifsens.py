@@ -41,20 +41,27 @@ UPLOAD_TO_GCS = True  # Upload pkl files to GCS
 CLEANUP_LOCAL_FILES = True  # Remove local files after successful GCS upload
 
 
-def get_open_data(date, param, levelist=[], number=None):
-    """Retrieve data from ECMWF Open Data API."""
+def get_open_data(date, param, levelist=[], number=None, constant=False):
+    """Retrieve data from ECMWF Open Data API.
+
+    constant=True: the field is time-invariant (lsm, z, slor, sdor). These come
+    from the deterministic `oper` stream, which only runs at 00z/12z, so a
+    `date - 6h` step landing on 06z/18z 404s. Fetch once at `date` and
+    replicate to the 2-timestep shape used by the prognostic fields.
+    """
     fields = defaultdict(list)
-    print(f"    Retrieving {param} data" + (f" at levels {levelist}" if levelist else "") + 
+    print(f"    Retrieving {param} data" + (f" at levels {levelist}" if levelist else "") +
           (f" for member {number}" if number else ""))
-    
-    # Get the data for the current date and the previous date
-    for d in [date - datetime.timedelta(hours=6), date]:
+
+    # Prognostic fields need [date-6h, date]; constants only `date` (replicated)
+    dates = [date] if constant else [date - datetime.timedelta(hours=6), date]
+    for d in dates:
         if number is None:
             data = ekd.from_source("ecmwf-open-data", date=d, param=param, levelist=levelist)
         else:
-            data = ekd.from_source("ecmwf-open-data", date=d, param=param, levelist=levelist, 
+            data = ekd.from_source("ecmwf-open-data", date=d, param=param, levelist=levelist,
                                  number=[number], stream='enfo')
-        
+
         for f in data:
             # ECMWF 50r1 added pressure-level geopotential `z` to the open-data
             # deterministic stream. When no level list was requested we only want
@@ -71,6 +78,9 @@ def get_open_data(date, param, levelist=[], number=None):
             # Add the values to the list
             name = f"{f.metadata('param')}_{f.metadata('levelist')}" if levelist else f.metadata("param")
             fields[name].append(values)
+            # Constants fetched once -> replicate for the second timestep
+            if constant:
+                fields[name].append(values)
 
     # Create a single matrix for each parameter
     for param, values in fields.items():
@@ -91,7 +101,7 @@ def create_input_state(date, number):
     fields.update(get_open_data(date, param=PARAM_SFC, number=number))
     
     print("  Getting constant surface fields...")
-    fields.update(get_open_data(date, param=PARAM_SFC_FC))  # Constant fields
+    fields.update(get_open_data(date, param=PARAM_SFC_FC, constant=True))  # Constant fields
     
     # Add soil fields
     print("  Getting soil fields...")

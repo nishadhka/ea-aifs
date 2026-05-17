@@ -297,20 +297,25 @@ def extract_pressure_level_coordinates(zstore, base_path):
     return levels
 
 
-def get_constant_fields():
+def get_constant_fields(date):
     """Get static forcing fields (lsm, z, slor, sdor) from ECMWF Open Data.
 
     Same approach as ceda_era5t_pkl_input_aifsens.py — these are time-invariant
     constants downloaded once and shared across all members. Not available in
     the ensemble GRIB parquets, so fetched separately.
 
+    `date` must be the analysis time (00z/12z). These come from the
+    deterministic `oper` stream, which only runs at 00z/12z; omitting the date
+    lets earthkit default to the latest cycle, which 404s when the newest run
+    is 06z/18z (no oper at those times).
+
     Returns dict of {param: np.array shape (2, 721, 1440)} at 0.25 deg.
     Both timesteps contain identical values (constants don't change).
     """
     import earthkit.data as ekd
 
-    print("  Fetching constant fields (z, slor, sdor, lsm) from ECMWF Open Data...")
-    data = ekd.from_source("ecmwf-open-data", param=PARAM_SFC_CONST)
+    print(f"  Fetching constant fields (z, slor, sdor, lsm) from ECMWF Open Data @ {date}...")
+    data = ekd.from_source("ecmwf-open-data", date=date, param=PARAM_SFC_CONST)
 
     fields = {}
     for f in data:
@@ -573,7 +578,8 @@ def main():
     # Fetch constant fields once (lsm, z, slor, sdor) from ECMWF Open Data
     # Same approach as ceda_era5t_pkl_input_aifsens.py
     try:
-        const_fields = get_constant_fields()
+        analysis_date = datetime.datetime.strptime(f"{date_str}_{run}", "%Y%m%d_%H")
+        const_fields = get_constant_fields(analysis_date)
         print(f"  Constant fields: {list(const_fields.keys())}")
     except Exception as e:
         print(f"  Warning: Could not fetch constant fields: {e}")
