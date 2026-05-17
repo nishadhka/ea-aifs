@@ -374,6 +374,69 @@ def get_soil_fields(date, member_num):
     return result
 
 
+def _decode_coord_values(zstore, coord_path):
+    """Decode a 1-D zarr coordinate stored as a single base64 chunk (<f8/<i8)."""
+    za = zstore.get(f"{coord_path}/.zarray")
+    if za is None:
+        return []
+    meta = json.loads(za) if isinstance(za, str) else za
+    n = (meta.get('shape') or [0])[0]
+    if not n:
+        return []
+    is_f8 = 'f8' in meta.get('dtype', '<f8')
+    item = struct.calcsize('<d' if is_f8 else '<q')
+    fmt = '<' + ('d' if is_f8 else 'q') * n
+    for key, val in zstore.items():
+        if (key.startswith(coord_path + '/')
+                and not key.endswith(('.zarray', '.zattrs', '.zgroup'))):
+            if isinstance(val, str) and val.startswith('base64:'):
+                raw = base64.b64decode(val[7:])
+                if len(raw) == n * item:
+                    return list(struct.unpack(fmt, raw))
+    return []
+
+
+def extract_soil_from_parquet(zstore):
+    """Distinct soil temperature stl1 (layer 1) & stl2 (layer 2) from the S3
+    parquet `sot` (typeOfLevel soilLayer, layers [1,2,4]).
+
+    Sourced from the S3 archive, so it works for ANY historical date — unlike
+    ECMWF Open Data, which only retains ~3-4 days. Distinct layers match
+    ecmwf_opendata_pkl_input_aifsens.py (vs the old stl1 == stl2 single-layer
+    hack). Returns {'stl1': (2,721,1440), 'stl2': (2,721,1440)} or {}.
+    """
+    base = 'sot/instant/soilLayer'
+    arr = extract_variable_parallel(zstore, f"{base}/sot")
+    if arr is None:
+        return {}
+    layers = _decode_coord_values(zstore, f"{base}/soilLayer")  # e.g. [1.0,2.0,4.0]
+
+    def layer_idx(target):
+        for i, lv in enumerate(layers):
+            if int(round(lv)) == target:
+                return i
+        return None
+
+    i1 = layer_idx(1)
+    i2 = layer_idx(2)
+    if i1 is None or i2 is None:        # fallback: first two are layers 1 & 2
+        i1, i2 = 0, 1
+
+    def pick(idx):
+        if arr.ndim == 5:               # (time, step, soilLayer, lat, lon)
+            return arr[:, 0, idx, :, :]
+        if arr.ndim == 4:               # (time, soilLayer, lat, lon)
+            return arr[:, idx, :, :]
+        if arr.ndim == 6:               # (time, step, soilLayer, number, lat, lon)
+            return arr[:, 0, idx, 0, :, :]
+        return None
+
+    s1, s2 = pick(i1), pick(i2)
+    if s1 is None or s2 is None:
+        return {}
+    return {'stl1': np.asarray(s1), 'stl2': np.asarray(s2)}
+
+
 def extract_all_fields(zstore, const_fields=None, date=None, member=None):
     """Extract all AIFS fields from a single pre-loaded zstore. Returns fields dict.
 
@@ -446,18 +509,18 @@ def extract_all_fields(zstore, const_fields=None, date=None, member=None):
         if gh_key in fields:
             fields[f"z_{level}"] = fields.pop(gh_key) * 9.80665
 
-    # Soil temperature (stl1, stl2) per member from ECMWF Open Data, using
-    # distinct soil levels 1 and 2 — matches ecmwf_opendata_pkl_input_aifsens.py.
-    # (The ensemble parquet only has one soil layer, which made stl1 == stl2.)
-    # Returned already on N320 as (2, 542080); passed through the regrid step.
-    if date is not None and member is not None:
-        try:
-            soil = get_soil_fields(date, member)
-            for k, v in soil.items():
-                fields[k] = v
-            print(f"    soil: {sorted(soil.keys())} from open-data levels {SOIL_LEVELS}")
-        except Exception as e:
-            print(f"    soil fetch failed ({e}); stl1/stl2 will be missing")
+    # Soil temperature stl1 (layer 1) & stl2 (layer 2) from the S3 parquet
+    # `sot`. S3-sourced (long archive) so it works for ANY historical date,
+    # unlike ECMWF Open Data (~3-4 day retention). Distinct layers match
+    # ecmwf_opendata_pkl_input_aifsens.py (vs the old stl1 == stl2 hack).
+    try:
+        soil = extract_soil_from_parquet(zstore)
+        for k, v in soil.items():
+            fields[k] = v
+        print(f"    soil: {sorted(soil) if soil else 'MISSING (sot not in parquet)'} "
+              f"from parquet sot layers [1,2]")
+    except Exception as e:
+        print(f"    soil extraction failed ({e}); stl1/stl2 will be missing")
 
     # Merge constant forcing fields (lsm, z, slor, sdor) from ECMWF Open Data
     if const_fields:
