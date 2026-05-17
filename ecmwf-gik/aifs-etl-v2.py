@@ -314,6 +314,12 @@ def get_constant_fields():
 
     fields = {}
     for f in data:
+        # ECMWF 50r1 added geopotential `z` at pressure levels to the open-data
+        # deterministic stream. We only want the single surface field here
+        # (orography); skip pressure-level fields, otherwise the last pl-z would
+        # overwrite fields['z'] with a 925 hPa geopotential instead of orography.
+        if f.metadata("levtype") == "pl":
+            continue
         values = f.to_numpy()
         assert values.shape == (721, 1440), f"Unexpected shape: {values.shape}"
         # ECMWF Open Data is -180 to 180, shift to 0-360

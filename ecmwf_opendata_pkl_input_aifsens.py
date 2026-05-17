@@ -56,6 +56,13 @@ def get_open_data(date, param, levelist=[], number=None):
                                  number=[number], stream='enfo')
         
         for f in data:
+            # ECMWF 50r1 added pressure-level geopotential `z` to the open-data
+            # deterministic stream. When no level list was requested we only want
+            # single-level/surface fields; skip pressure-level fields, otherwise
+            # the constant `z` (orography) collapses into a (2*Nlevels, ...)
+            # array and breaks downstream AIFS ENS inference.
+            if not levelist and f.metadata("levtype") == "pl":
+                continue
             # Open data is between -180 and 180, we need to shift it to 0-360
             assert f.to_numpy().shape == (721, 1440)
             values = np.roll(f.to_numpy(), -f.shape[1] // 2, axis=1)
