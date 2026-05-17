@@ -86,14 +86,30 @@ def fetch_s3_chunk(url, offset, length):
 
 
 def decode_grib_bytes(data):
-    """Decode GRIB2 bytes directly with eccodes (no temp files)."""
+    """Decode GRIB2 bytes directly with eccodes (no temp files).
+
+    The ECMWF dissemination GRIB on the ``ecmwf-forecasts`` S3 bucket starts at
+    longitude 180 (columns run 180..359.75, 0..179.75). earthkit.regrid and the
+    AIFS checkpoint expect the source grid to start at longitude 0 — which is
+    exactly what the open-data pipeline produces via np.roll(values, -Ni//2).
+    Without this roll every parquet-sourced field is shifted 180 deg in
+    longitude relative to the open-data-sourced static forcing (z, lsm, slor,
+    sdor), which destroys the geography and breaks the model. Derive the shift
+    from the GRIB's own first longitude so it is correct for any convention
+    (lon0=180 -> roll -720; lon0=0 -> no roll).
+    """
     import eccodes
     msgid = eccodes.codes_new_from_message(data)
     try:
         ni = eccodes.codes_get(msgid, 'Ni')
         nj = eccodes.codes_get(msgid, 'Nj')
+        lon0 = eccodes.codes_get(msgid, 'longitudeOfFirstGridPointInDegrees')
         values = eccodes.codes_get_array(msgid, 'values').astype(np.float32)
-        return values.reshape(nj, ni)
+        arr = values.reshape(nj, ni)
+        shift = int(round((lon0 % 360.0) / 360.0 * ni)) % ni
+        if shift:
+            arr = np.roll(arr, -shift, axis=1)
+        return arr
     finally:
         eccodes.codes_release(msgid)
 
@@ -347,15 +363,19 @@ def get_soil_fields(date, member_num):
     return result
 
 
-def extract_all_fields(zstore, const_fields=None):
+def extract_all_fields(zstore, const_fields=None, date=None, member=None):
     """Extract all AIFS fields from a single pre-loaded zstore. Returns fields dict.
 
     const_fields: pre-fetched constant fields (lsm, z, slor, sdor) to merge in.
+    date, member: used to fetch per-member soil temperature (stl1, stl2) from
+        ECMWF Open Data with distinct soil levels 1 and 2 — matching
+        ecmwf_opendata_pkl_input_aifsens.py. The ensemble GRIB parquet only
+        carries a single soil layer, which would make stl1 == stl2.
     """
     var_paths = get_variable_path_mapping()
     fields = {}
-    # Fetch dynamic params + soil from parquet; constants come from const_fields
-    all_params = PARAM_SFC + ['sot'] + PARAM_PL
+    # Dynamic params from parquet; constants from const_fields; soil from open-data
+    all_params = PARAM_SFC + PARAM_PL
 
     for p in all_params:
         if p not in var_paths:
@@ -408,13 +428,18 @@ def extract_all_fields(zstore, const_fields=None):
         if gh_key in fields:
             fields[f"z_{level}"] = fields.pop(gh_key) * 9.80665
 
-    # Extract soil temperature from parquet if available
-    # The parquet has sot as a single layer; use for both stl1 and stl2
-    if 'sot' in fields:
-        sot_data = fields.pop('sot')
-        fields['stl1'] = sot_data
-        fields['stl2'] = sot_data.copy()
-        print(f"    sot -> stl1, stl2: shape {sot_data.shape}")
+    # Soil temperature (stl1, stl2) per member from ECMWF Open Data, using
+    # distinct soil levels 1 and 2 — matches ecmwf_opendata_pkl_input_aifsens.py.
+    # (The ensemble parquet only has one soil layer, which made stl1 == stl2.)
+    # Returned already on N320 as (2, 542080); passed through the regrid step.
+    if date is not None and member is not None:
+        try:
+            soil = get_soil_fields(date, member)
+            for k, v in soil.items():
+                fields[k] = v
+            print(f"    soil: {sorted(soil.keys())} from open-data levels {SOIL_LEVELS}")
+        except Exception as e:
+            print(f"    soil fetch failed ({e}); stl1/stl2 will be missing")
 
     # Merge constant forcing fields (lsm, z, slor, sdor) from ECMWF Open Data
     if const_fields:
@@ -452,9 +477,8 @@ def create_input_state_from_parquet(parquet_path, member, zstore=None, const_fie
     if zstore is None:
         zstore = read_parquet_to_refs(parquet_path)
 
-    fields = extract_all_fields(zstore, const_fields=const_fields)
-
-    # Extract date from path
+    # Extract analysis date from path (needed before field extraction so soil
+    # temperature can be fetched for the correct date/member).
     path_parts = Path(parquet_path).parts
     date = datetime.datetime.now()
     for part in path_parts:
@@ -463,6 +487,8 @@ def create_input_state_from_parquet(parquet_path, member, zstore=None, const_fie
             if len(dp) >= 2:
                 date = datetime.datetime.strptime(f"{dp[0]}_{dp[1]}", "%Y%m%d_%H")
                 break
+
+    fields = extract_all_fields(zstore, const_fields=const_fields, date=date, member=member)
 
     elapsed = time.time() - start_time
     print(f"  [{member_label}] {len(fields)} fields in {elapsed:.1f}s ({elapsed/60:.1f}m)")
