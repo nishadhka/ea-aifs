@@ -178,7 +178,7 @@ def upload_to_gcs(local_file_path, gcs_bucket, gcs_blob_name, service_account_ke
 def main():
     """Main function to test ensemble input state creation."""
     # Get latest date
-    DATE = datetime.datetime(2026, 3, 5, 0, 0)  # 2025-09-11 00:00 UTC
+    DATE = datetime.datetime(2026, 5, 14, 0, 0)  # 2025-09-11 00:00 UTC
     #DATE = OpendataClient("ecmwf").latest()
     datestr = DATE.strftime("%Y%m%d_%H%M")
     print(f"Initial date is {DATE}")
