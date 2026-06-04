@@ -71,14 +71,18 @@ SOIL_MAP = {"sot_1": "stl1", "sot_2": "stl2"}
 
 N320_NPOINTS = 542080
 RAW_SHAPE = (721, 1440)            # ECMWF 0p25, lat 90->-90, lon0=180
-MAX_WORKERS = 16
+# Overridable so a member can be throttled (S3 SlowDown) or run single-threaded
+# to warm the earthkit-regrid matrix cache without a concurrent-download race.
+MAX_WORKERS = int(os.environ.get("S3_PKL_MAX_WORKERS", "16"))
 
 S3_BUCKET = "ecmwf-forecasts"
 S3_REGION = "eu-central-1"
 
 # GCS (mirrors ecmwf_opendata_pkl_input_aifsens.py; off by default for validation)
 GCS_BUCKET = "aifs-aiquest-us-20251127"
-GCS_SERVICE_ACCOUNT_KEY = "/scratch/notebook/ea-aifs/coiled-data.json"
+# key sits next to this script; resolve from __file__ so cwd doesn't matter
+GCS_SERVICE_ACCOUNT_KEY = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "coiled-data.json")
 
 
 # ---------------------------------------------------------------- S3 fetch layer
