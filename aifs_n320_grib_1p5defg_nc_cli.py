@@ -28,8 +28,29 @@ from typing import List, Optional
 # IMPORTANT: Configure paths and earthkit settings BEFORE importing earthkit
 # This ensures the cache settings are applied before the singleton is created
 # -----------------------------------------------------------------------------
-DEF_BASE = "/scratch/notebook"
-BASE_DIR = Path(os.environ.get("EARTHKIT_WORKDIR", DEF_BASE))
+def _pick_base_dir() -> Path:
+    """Choose a writable working directory for GRIB→NetCDF processing.
+
+    Order of preference:
+      1. $EARTHKIT_WORKDIR              — explicit override
+      2. /scratch/notebook             — original notebook/cluster layout, only when
+                                         /scratch is actually present and writable
+      3. ~/scratch/notebook            — writable fallback on a plain VM (no /scratch mount)
+      4. <system-temp>/aifs_grib_nc    — last resort
+    """
+    env = os.environ.get("EARTHKIT_WORKDIR")
+    if env:
+        return Path(env)
+    scratch = Path("/scratch")
+    if scratch.is_dir() and os.access(scratch, os.W_OK):
+        return scratch / "notebook"
+    home = Path.home()
+    if os.access(home, os.W_OK):
+        return home / "scratch" / "notebook"
+    return Path(tempfile.gettempdir()) / "aifs_grib_nc"
+
+
+BASE_DIR = _pick_base_dir()
 TMP_DIR = BASE_DIR / "tmp"
 EK_CACHE_DIR = BASE_DIR / ".cache/earthkit-data"
 EK_TMP_DIR = BASE_DIR / "earthkit-tmp"
@@ -84,19 +105,19 @@ except Exception:
 
 
 def get_disk_free_gb() -> float:
-    """Return free disk space in GB for the scratch partition."""
-    import subprocess
+    """Return free disk space in GB for the filesystem holding BASE_DIR.
+
+    Uses shutil.disk_usage on the working directory (or its nearest existing
+    parent) instead of a hardcoded `df /scratch`, so it works on any machine
+    regardless of where BASE_DIR lives.
+    """
     try:
-        result = subprocess.run(['df', '-BG', '/scratch'], capture_output=True, text=True)
-        # Parse output: Filesystem 1G-blocks Used Available Use% Mounted
-        lines = result.stdout.strip().split('\n')
-        if len(lines) >= 2:
-            parts = lines[1].split()
-            available = int(parts[3].rstrip('G'))
-            return available
+        path = BASE_DIR
+        while not path.exists() and path != path.parent:
+            path = path.parent
+        return round(shutil.disk_usage(str(path)).free / (1024 ** 3), 1)
     except Exception:
-        pass
-    return -1
+        return -1
 
 
 def diagnose_disk_usage() -> None:
@@ -104,9 +125,10 @@ def diagnose_disk_usage() -> None:
     import subprocess
     print("    📊 Disk usage diagnosis:")
     dirs_to_check = [
-        "/scratch/notebook/tmp",
-        "/scratch/notebook/.cache",
-        "/scratch/notebook/earthkit-tmp",
+        str(TMP_DIR),
+        str(EK_CACHE_DIR),
+        str(EK_TMP_DIR),
+        str(EK_REGRID_CACHE),
         str(Path.home() / ".cache"),
         "/tmp",
         "/var/tmp",
