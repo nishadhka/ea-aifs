@@ -178,9 +178,13 @@ python aifs_n320_grib_1p5defg_nc_cli.py --date 20260129 --fp16 --max-workers 2
 - **RAM-bound, not CPU-bound.** Each member peaks at **~1.3 GiB RSS** (measured). Keep
   `max-workers × ~1.6 GiB` within available RAM — there is usually **no swap**, so
   overcommit gets a member **OOM-killed** mid-write. The script prints a RAM-guard
-  warning if you exceed the estimate (`--mem-per-worker-gb` tunes it). On a 2-vCPU /
-  8 GiB box, **2 is the sweet spot**; expect ~20–40% wall-clock gain (one physical
-  core), not a halving — for a real speedup use a host with more physical vCPUs.
+  warning if you exceed the estimate (`--mem-per-worker-gb` tunes it). **Size
+  `--max-workers` to *physical* cores, not vCPUs.** Measured 20260611 on a 2-vCPU
+  box (= 1 physical core + hyperthread): 2-way gave **no wall-clock gain** (19
+  members ≈ 7.6 min/member, same as sequential) — earthkit's regrid is CPU-bound, so
+  two members just contend for the one core. The dispatcher pays off only on a host
+  with multiple **physical** cores (e.g. 4–8 real vCPUs), where it scales ~linearly
+  until RAM is the cap.
 - **Isolation (why it's safe):** each worker gets a private `EARTHKIT_WORKDIR` *slot*
   with its **own** earthkit-data, tmp, **and earthkit-regrid (SQLite) cache**. That
   regrid cache must not be shared across concurrent processes — doing so throws
