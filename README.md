@@ -165,6 +165,30 @@ python aifs_n320_grib_1p5defg_nc_cli.py --date 20260129 --fp16
 - **Purpose:** Download GRIB files from GCS and regrid from N320 to 1.5 degree NetCDF
 - **Output:** NetCDF files in `gs://aifs-aiquest-us-20251127/YYYYMMDD_0000/1p5deg_nc/` (or `fp16_1p5deg_nc/`)
 
+#### Parallel processing — `--max-workers`
+
+Each member runs in its own subprocess; `--max-workers N` runs N of them at once.
+
+```bash
+# Process 2 members concurrently
+python aifs_n320_grib_1p5defg_nc_cli.py --date 20260129 --fp16 --max-workers 2
+```
+
+- **Default `--max-workers 1`** = sequential (unchanged behavior).
+- **RAM-bound, not CPU-bound.** Each member peaks at **~1.3 GiB RSS** (measured). Keep
+  `max-workers × ~1.6 GiB` within available RAM — there is usually **no swap**, so
+  overcommit gets a member **OOM-killed** mid-write. The script prints a RAM-guard
+  warning if you exceed the estimate (`--mem-per-worker-gb` tunes it). On a 2-vCPU /
+  8 GiB box, **2 is the sweet spot**; expect ~20–40% wall-clock gain (one physical
+  core), not a halving — for a real speedup use a host with more physical vCPUs.
+- **Isolation (why it's safe):** each worker gets a private `EARTHKIT_WORKDIR` *slot*
+  with its **own** earthkit-data, tmp, **and earthkit-regrid (SQLite) cache**. That
+  regrid cache must not be shared across concurrent processes — doing so throws
+  `database is locked` and fails members. Each slot downloads the N320→1.5° matrix
+  once and reuses it. Override the workdir root with `EARTHKIT_WORKDIR=/path`.
+- **Don't double-launch.** Two parent runs over the same `--members` just duplicate
+  work and race on GCS output — run one launcher with `--max-workers`, not two.
+
 ### Step 3b: Ensemble Quintile Analysis
 
 **File:** `ensemble_quintile_analysis_cli.py`
