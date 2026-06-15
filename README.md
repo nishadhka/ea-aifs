@@ -227,6 +227,29 @@ python forecast_submission_cli.py --date 20260129 --dry-run
 - **Purpose:** Submit quintile probabilities to AI Weather Quest competition
 - **Requires:** `.env` file with `AIWQ_TEAM_NAME`, `AIWQ_MODEL_NAME`, and `AIWQ_PASSWORD`
 - **Submits:** 3 variables (mslp, pr, tas) x 2 weeks = 6 forecasts per run
+- **Submission window:** AI-WQ accepts a forecast only within **init date → init+3 days**
+  (e.g. `20260611` was open `20260611`–`20260614`). Outside it the server rejects with
+  *"You are not allowed to submit … Allowed time window … is …"*. Run this step within
+  3 days of the init date.
+
+### Step 3c (alt): Build AI-WQ individual files + zip (no live submission)
+
+**File:** `aiwq_individual_files_cli.py`
+
+```bash
+# Write the 6 per-variable/week DataArrays as individual AI-WQ files and zip them
+python aiwq_individual_files_cli.py --date 20260611 --fp16
+# options: --variables tas pr mslp  --weeks 1 2  --save-dir DIR  --zip PATH
+```
+
+- **Purpose:** Produce the same forecasts as the AI-WQ structure
+  (`forecast_submission.AI_WQ_create_empty_dataarray` → `to_netcdf`) and bundle them,
+  **without** submitting — for archival or a manual/out-of-window upload.
+- **Output:** `{variable}_{date}_p{week}_{team}_{model}.nc` (each `quintile×lat×lon` =
+  `5×121×240`, probabilities sum to 1 across quintiles) in `aiwq_individual_<date>/`,
+  zipped to `aiwq_submission_<date>_<team>_<model>.zip`.
+- Reuses the same `prepare_aiwq_submission` + credentials as Step 3c, so the files are
+  identical to what would be submitted.
 
 ---
 
