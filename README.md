@@ -307,6 +307,55 @@ ECMWF Open Data → Pickle Files → GCS (YYYYMMDD_0000/input/)
 
 **Reference:** [HuggingFace Discussion #17](https://huggingface.co/ecmwf/aifs-ens-1.0/discussions/17)
 
+### GPU Memory Profiling
+
+Before committing a GPU/precision/chunk choice, profile peak VRAM with the PyTorch
+CUDA memory snapshot, following the method in
+[Discussion #17](https://huggingface.co/ecmwf/aifs-ens-1.0/discussions/17) and the ECMWF
+["Anemoi Profiling" demo](https://events.ecmwf.int/event/466/timetable/). Two ready
+scripts wrap a single-member inference between
+`torch.cuda.memory._record_memory_history()` and `_dump_snapshot()`, and report
+`max_memory_allocated` / `max_memory_reserved`:
+
+| Script | Precision |
+|--------|-----------|
+| `FahamuAIFSv1/pytorch_profile_fp32.py` | FP32 (full) |
+| `fp16FahamuAIFSv1/pytorch_profile_fp16.py` | FP16 (half) + chunking |
+
+**Steps**
+
+1. **Stage one input pkl** on the GPU box (so the profiler skips the download), e.g.
+   `gsutil cp gs://aifs-aiquest-us-20251127/<date>_0000/input/input_state_member_001.pkl /scratch/input_states/`
+   (or pass `--no-pickle` to download live).
+2. **Run the profiler** for the precision/chunks you want to test:
+   ```bash
+   # FP16 + 16 chunks (target: fit < 24 GB), 1 member, short forecast
+   python fp16FahamuAIFSv1/pytorch_profile_fp16.py --chunks 16 --members 1 --lead-time 72 \
+       --pickle-dir /scratch/input_states --threshold 23.0
+   # Tighter memory: --chunks 32 (or 64).  Baseline for contrast: FP32
+   python FahamuAIFSv1/pytorch_profile_fp32.py --members 1 --lead-time 72
+   ```
+3. **Read the peaks**: the script prints `max_memory_allocated` / `max_memory_reserved`
+   (GB) and writes a summary; it flags a fail if reserved exceeds `--threshold`
+   (default 23 GB) and suggests raising `--chunks`.
+4. **Inspect the snapshot** visually: upload the emitted
+   `aifs_ens_fp16_memory_snapshot.pickle` (and the `*_gpu_mem.csv`) to
+   <https://pytorch.org/memory_viz> to see the allocation timeline.
+5. **Pick the config**: choose the smallest GPU whose VRAM clears the measured reserved
+   peak, then set the same `--precision`/`--chunks` on the matching
+   `*_automate_aifs_gpu_pipeline*.py` orchestrator (`INFERENCE_PRECISION`,
+   `INFERENCE_NUM_CHUNKS`).
+
+**Measured (AIFS-ENS v1.0, from Discussion #17)**
+
+| Config | Peak allocated | Peak reserved | Fits 24 GB? |
+|--------|----------------|---------------|-------------|
+| FP32 (full) | — | >34 GB (real total >48 GB w/ CUDA workspace) | ❌ needs A100/H100 |
+| FP16 (`precision="16"`) + `NUM_CHUNKS=16` | ~20 GB | ~23 GB | ✅ L4 / A10G / RTX 4090 |
+
+> For **fp16FahamuAIFSv2** (AIFS-ENS-2.0), re-run this profiling on the v2 GPU env — the
+> v2 model is larger, so the FP16 peak may differ and `NUM_CHUNKS` may need raising.
+
 ## Ensemble Configuration
 - **Members:** 1-50
 - **Forecast Length:** 792 hours (33 days)
