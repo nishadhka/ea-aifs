@@ -38,6 +38,7 @@ timesteps. Constants (`lsm,z,slor,sdor`) are still fetched once and replicated.
 | `ecmwf_opendata_pkl_input_aifsens_v2.py` | 1 (CPU) | ECMWF Open Data → 112-field input-state pkl per member, upload to GCS |
 | `fp16_automate_aifs_gpu_pipeline_v2.py` | 2 (GPU) | Orchestrator: per-member download → FP16 inference → upload → cleanup. Loads `ecmwf/aifs-ens-2.0` once. |
 | `fp16_multi_run_AIFS_ENS_v2.py` | 2 (GPU) | AIFS-ENS-2.0 FP16 runner (`run_ensemble_member`), 72h-chunked GRIB. Imported by the orchestrator. |
+| `pytorch_profile_fp16_v2.py` | 2 (GPU) | VRAM profiler for aifs-ens-2.0 (FP16 + chunks); PyTorch CUDA memory snapshot. See *GPU Memory Profiling*. |
 
 The 112-field set: 9 surface + 4 constants + 4 soil (`stl1/2`,`swvl1/2`) + 12 wave
 (`mwd`→`cos_mwd/sin_mwd`) + 83 pressure-level (6 params × 14 levels − `q_10`).
@@ -88,13 +89,10 @@ and the ECMWF ["Anemoi Profiling" demo](https://events.ecmwf.int/event/466/timet
 **aifs-ens-2.0 is a larger model than v1, so the v1 numbers are only a starting point —
 v2 must be re-profiled on its own GPU env.**
 
-The profiling scripts currently exist for v1
-(`FahamuAIFSv1/pytorch_profile_fp32.py`, `fp16FahamuAIFSv1/pytorch_profile_fp16.py`);
-they wrap a single-member inference between `torch.cuda.memory._record_memory_history()`
-and `_dump_snapshot()` and report `max_memory_allocated` / `max_memory_reserved`. For v2,
-run the same method against the `ecmwf/aifs-ens-2.0` checkpoint (clone the fp16 profiler
-to `fp16FahamuAIFSv2/pytorch_profile_fp16_v2.py`, swapping the checkpoint and pointing
-`--pickle-dir` at a v2 `input_v2` pkl).
+Use **`pytorch_profile_fp16_v2.py`** (cloned from the v1 fp16 profiler, swapped to the
+`ecmwf/aifs-ens-2.0` checkpoint and the 112-field v2 input). It wraps a single-member
+inference between `torch.cuda.memory._record_memory_history()` and `_dump_snapshot()` and
+reports `max_memory_allocated` / `max_memory_reserved`.
 
 **Steps**
 
