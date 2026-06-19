@@ -1,9 +1,11 @@
 # fp16FahamuAIFSv2 (AIFS ENS v2.0 / FP16 / ECMWF Open Data)
 
 New model version targeting **AIFS-ENS-2.0** (checkpoint `ecmwf/aifs-ens-2.0`), run
-at FP16. This folder currently implements the **v2.0 input data preparation**; the GPU
-inference runner, post-processing and submission for v2 are not done yet (the v1/era5t
-Steps 3–5 in `shared/` are reusable once v2 GRIB output exists).
+at FP16. This folder implements the **v2.0 input data preparation** (Step 1) and the
+**v2 GPU runner + orchestrator** (Step 2). Post-processing/submission (Steps 3–5) reuse
+the `shared/` CLIs once v2 GRIB output exists. The Step 2 code is written but **not yet
+smoke-tested on a GPU** (the inference stack only exists on the GPU image — see the
+GPU-runner caveats below).
 
 Reference notebook: `run_AIFS_ENS_v2.0.ipynb`
 (https://huggingface.co/ecmwf/aifs-ens-2.0/blob/main/run_AIFS_ENS_v2.0.ipynb).
@@ -31,9 +33,11 @@ timesteps. Constants (`lsm,z,slor,sdor`) are still fetched once and replicated.
 
 ## Scripts
 
-| Script | Role |
-|--------|------|
-| `fp16FahamuAIFSv2/ecmwf_opendata_pkl_input_aifsens_v2.py` | **Step 1 (v2):** ECMWF Open Data → 112-field input-state pkl per member, upload to GCS |
+| Script | Step | Role |
+|--------|------|------|
+| `ecmwf_opendata_pkl_input_aifsens_v2.py` | 1 (CPU) | ECMWF Open Data → 112-field input-state pkl per member, upload to GCS |
+| `fp16_automate_aifs_gpu_pipeline_v2.py` | 2 (GPU) | Orchestrator: per-member download → FP16 inference → upload → cleanup. Loads `ecmwf/aifs-ens-2.0` once. |
+| `fp16_multi_run_AIFS_ENS_v2.py` | 2 (GPU) | AIFS-ENS-2.0 FP16 runner (`run_ensemble_member`), 72h-chunked GRIB. Imported by the orchestrator. |
 
 The 112-field set: 9 surface + 4 constants + 4 soil (`stl1/2`,`swvl1/2`) + 12 wave
 (`mwd`→`cos_mwd/sin_mwd`) + 83 pressure-level (6 params × 14 levels − `q_10`).
@@ -41,18 +45,39 @@ The 112-field set: 9 surface + 4 constants + 4 soil (`stl1/2`,`swvl1/2`) + 12 wa
 ## Run
 
 ```bash
+# --- Step 1: input prep (CPU / ETL machine) ---
 # Latest open-data date, all 50 members, upload to gs://…/<date>/input_v2/
 python fp16FahamuAIFSv2/ecmwf_opendata_pkl_input_aifsens_v2.py --members 1-50
-
-# Pin a date / subset / skip upload while testing
+# Pin a date / subset / skip upload while testing:
 python fp16FahamuAIFSv2/ecmwf_opendata_pkl_input_aifsens_v2.py \
     --date 20260611 --members 1 --no-upload --keep-local
+
+# --- Step 2: GPU inference (Ampere+ GPU, v2 software env) ---
+python fp16FahamuAIFSv2/fp16_automate_aifs_gpu_pipeline_v2.py \
+    --date 20260611_0000 --members 1-50 --lead-time 960
+# reads  gs://…/20260611_0000/input_v2/  ->  writes gs://…/20260611_0000/fp16_v2_forecasts/
 ```
 
-- **Output:** `gs://aifs-aiquest-us-20251127/<date>_0000/input_v2/input_state_member_NNN.pkl`
-  (kept separate from v1's `input/` so both versions can coexist).
-- **Requires:** `coiled-data.json` (GCS key) unless `--no-upload`. CPU only.
-- `--source` chooses the open-data mirror (`ecmwf`/`azure`/`aws`/`google`).
+- **Step 1 output:** `gs://aifs-aiquest-us-20251127/<date>_0000/input_v2/input_state_member_NNN.pkl`
+  (kept separate from v1's `input/` so both versions coexist). Requires `coiled-data.json`
+  unless `--no-upload`. CPU only. `--source` picks the mirror (`ecmwf`/`azure`/`aws`/`google`).
+- **Step 2 output:** `gs://…/<date>_0000/fp16_v2_forecasts/aifs_ens_forecast_<date>_memberNNN_h*.grib`.
+  Needs an Ampere+ GPU and the v2 software env (below).
+- **Steps 3–5:** reuse `shared/aifs_n320_grib_1p5defg_nc_cli.py` (point
+  `--gcs-input-subpath fp16_v2_forecasts`), then the `shared/` quintile + submission CLIs
+  (submit under a new `AIWQ_MODEL_NAME_V2`).
+
+## GPU software environment (Step 2)
+
+The inference stack is **not** in the `aifs-etl` ETL env — build a dedicated GPU
+software env / coiled image pinned to the notebook versions:
+
+```
+anemoi-inference==0.8.3  anemoi-models==0.11.2  anemoi-utils==0.4.35.post3
+torch==2.7.0  torch-geometric==2.6.1
+earthkit-regrid==0.5.1  ecmwf-opendata==0.3.29  'earthkit-data<1.0.0'
+flash-attn==2.7.4.post1  # cu12torch2.7 wheel
+```
 
 ## Caveats / TODO
 
@@ -64,6 +89,17 @@ python fp16FahamuAIFSv2/ecmwf_opendata_pkl_input_aifsens_v2.py \
   that cycle.
 - **LSM mask:** derived here from the already-N320 `lsm` field (`lsm==0`), instead of the
   notebook's separate `lsm.grib` file — equivalent and avoids a side artifact.
-- **Not yet implemented:** v2 GPU runner (`aifs-ens-2.0` checkpoint, anemoi-models
-  0.11.2, flash-attn 2.7.4) and wiring Steps 3–5. The 112-field pkl is the contract the
-  runner will consume.
+- **GPU runner not yet smoke-tested.** The Step 2 code mirrors the v1 runner's proven
+  inference loop, but the anemoi-inference jump (v1 → **0.8.3**) may have drifted APIs.
+  Verify on the v2 GPU env, in order:
+  1. `SimpleRunner(checkpoint, device="cuda", precision="16")` still accepts those kwargs.
+  2. `runner.time_step` / `runner.lead_time` / `runner.reference_date` settable as attrs.
+  3. `GribFileOutput(runner, path=…)` + `.open/.write_step/.close` unchanged.
+  4. `from anemoi.inference.outputs.printer import print_state` path unchanged.
+  5. Re-profile **VRAM** for aifs-ens-2.0 in FP16 (bigger model) — may exceed 24 GB on
+     L4 → raise `ANEMOI_INFERENCE_NUM_CHUNKS` or use A100.
+- **Confirm v2 output params:** Step 3 extracts `tp`, `msl`, `2t`. aifs-ens-2.0 adds wave
+  outputs but should retain these — inspect one member's GRIB before wiring Steps 3–5.
+- **Ensemble noise:** v2 is inherently stochastic (model injects noise per run); keep the
+  50 IC-perturbed members. Exact reproducibility needs the determinism flags from the
+  notebook (`CUBLAS_WORKSPACE_CONFIG`, `torch.use_deterministic_algorithms`).
