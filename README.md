@@ -7,14 +7,29 @@ This document describes the complete sequential workflow for AI forecast submiss
 The AI forecast submission process consists of 3 main steps across different computing environments (CPU/ETL and GPU) to produce ensemble weather forecasts and submit them for evaluation.
 
 ### Workflow Index
-1. **Initial Condition Preparation** (ETL Machine) → `ecmwf_opendata_pkl_input_aifsens.py`
+1. **Initial Condition Preparation** (ETL Machine) → `shared/ecmwf_opendata_pkl_input_aifsens.py`
 2. **GPU Inference** (GPU Machines)
-   - FP32 (A100 GPU) → `automate_aifs_gpu_pipeline.py`
-   - FP16 (G2 GPU) → `fp16_automate_aifs_gpu_pipeline.py`
+   - FP32 (A100 GPU) → `FahamuAIFSv1/automate_aifs_gpu_pipeline.py`
+   - FP16 (G2 GPU) → `fp16FahamuAIFSv1/fp16_automate_aifs_gpu_pipeline.py`
 3. **Post-Processing & Submission** (ETL Machine)
-   - Regrid → `aifs_n320_grib_1p5defg_nc_cli.py`
-   - Quintile Analysis → `ensemble_quintile_analysis_cli.py`
-   - Forecast Submission → `forecast_submission_cli.py`
+   - Regrid → `shared/aifs_n320_grib_1p5defg_nc_cli.py`
+   - Quintile Analysis → `shared/ensemble_quintile_analysis_cli.py`
+   - Forecast Submission → `shared/forecast_submission_cli.py`
+
+### Models
+
+Scripts are grouped by forecast model. Each model has its own folder and a concise
+file-map doc; code shared across models lives in `shared/`.
+
+| Model | Input · Precision | Folder / doc |
+|-------|-------------------|--------------|
+| **FahamuAIFSv1** | ECMWF Open Data · FP32 (A100) | [`FahamuAIFSv1/FahamuAIFSv1.md`](FahamuAIFSv1/FahamuAIFSv1.md) |
+| **fp16FahamuAIFSv1** | ECMWF Open Data · FP16 (G2/L4) | [`fp16FahamuAIFSv1/fp16FahamuAIFSv1.md`](fp16FahamuAIFSv1/fp16FahamuAIFSv1.md) |
+| **era5tFp16FahamuAIFSv1** | CEDA ERA5T · FP16 | [`era5tFp16FahamuAIFSv1/era5tFp16FahamuAIFSv1.md`](era5tFp16FahamuAIFSv1/era5tFp16FahamuAIFSv1.md) |
+
+`tools/` holds model-agnostic diagnostics and the non-CLI legacy scripts. The sections
+below document the FahamuAIFSv1 / fp16FahamuAIFSv1 pipeline (they share Steps 1, 3–5);
+the ERA5T variant is covered under [ERA5T Pipeline](#era5t-pipeline-ceda-data-source).
 
 ---
 
@@ -63,10 +78,10 @@ A GCS service account key file (`coiled-data.json`) is also required for cloud s
 
 ## Step 1: Initial Condition Preparation (ETL Machine)
 
-**File:** `ecmwf_opendata_pkl_input_aifsens.py`
+**File:** `shared/ecmwf_opendata_pkl_input_aifsens.py`
 
 ```bash
-python ecmwf_opendata_pkl_input_aifsens.py
+python shared/ecmwf_opendata_pkl_input_aifsens.py
 ```
 
 - **Purpose:** Download and preprocess ECMWF open data for ensemble members 1-50
@@ -87,10 +102,10 @@ Start the GPU notebook:
 coiled notebook start --name p1-gpu-aifs-20260129 --vm-type a2-ultragpu-1g --software east5-us-flashattn-dockerv1 --workspace=gcp-sewaa-nka --region us-east5 --disk-size 60
 ```
 
-**File:** `automate_aifs_gpu_pipeline.py`
+**File:** `FahamuAIFSv1/automate_aifs_gpu_pipeline.py`
 
 ```bash
-python automate_aifs_gpu_pipeline.py --date 20260129_0000 --members 1-50
+python FahamuAIFSv1/automate_aifs_gpu_pipeline.py --date 20260129_0000 --members 1-50
 ```
 
 - **Purpose:** Run AIFS-ENS model at full FP32 precision for all ensemble members
@@ -102,10 +117,10 @@ python automate_aifs_gpu_pipeline.py --date 20260129_0000 --members 1-50
 
 | File | Purpose |
 |------|---------|
-| `automate_aifs_gpu_pipeline.py` | Main pipeline orchestrator |
-| `fp32_multi_run_AIFS_ENS_v1.py` | AIFS model runner (FP32) |
-| `download_pkl_from_gcs.py` | GCS download utility |
-| `upload_aifs_gpu_output_grib_gcs.py` | GCS upload utility |
+| `FahamuAIFSv1/automate_aifs_gpu_pipeline.py` | Main pipeline orchestrator |
+| `FahamuAIFSv1/fp32_multi_run_AIFS_ENS_v1.py` | AIFS model runner (FP32) |
+| `shared/download_pkl_from_gcs.py` | GCS download utility |
+| `shared/upload_aifs_gpu_output_grib_gcs.py` | GCS upload utility |
 | `coiled-data.json` | GCS service account key |
 
 **SHUTDOWN GPU notebook after completion** to avoid unnecessary costs.
@@ -118,10 +133,10 @@ Start the GPU notebook:
 coiled notebook start --name p2-fp16-20260129 --vm-type g2-standard-12 --software flashattn-dockerv1 --workspace=gcp-sewaa-nka --region us-east4 --disk-size 400
 ```
 
-**File:** `fp16_automate_aifs_gpu_pipeline.py`
+**File:** `fp16FahamuAIFSv1/fp16_automate_aifs_gpu_pipeline.py`
 
 ```bash
-python fp16_automate_aifs_gpu_pipeline.py --date 20260129_0000 --members 1-50
+python fp16FahamuAIFSv1/fp16_automate_aifs_gpu_pipeline.py --date 20260129_0000 --members 1-50
 ```
 
 - **Purpose:** Run AIFS-ENS model at FP16 (half precision), reducing VRAM from ~50GB to <24GB
@@ -133,10 +148,10 @@ python fp16_automate_aifs_gpu_pipeline.py --date 20260129_0000 --members 1-50
 
 | File | Purpose |
 |------|---------|
-| `fp16_automate_aifs_gpu_pipeline.py` | Main pipeline orchestrator (FP16) |
-| `fp16_multi_run_AIFS_ENS_v1.py` | AIFS model runner (FP16) |
-| `download_pkl_from_gcs.py` | GCS download utility |
-| `upload_aifs_gpu_output_grib_gcs.py` | GCS upload utility |
+| `fp16FahamuAIFSv1/fp16_automate_aifs_gpu_pipeline.py` | Main pipeline orchestrator (FP16) |
+| `fp16FahamuAIFSv1/fp16_multi_run_AIFS_ENS_v1.py` | AIFS model runner (FP16) |
+| `shared/download_pkl_from_gcs.py` | GCS download utility |
+| `shared/upload_aifs_gpu_output_grib_gcs.py` | GCS upload utility |
 | `coiled-data.json` | GCS service account key |
 
 **SHUTDOWN GPU notebook after completion.**
@@ -153,13 +168,13 @@ coiled notebook start --name p2-aifs-etl-20260129 --vm-type n2-standard-2 --soft
 
 ### Step 3a: Forecast Download & Regrid
 
-**File:** `aifs_n320_grib_1p5defg_nc_cli.py`
+**File:** `shared/aifs_n320_grib_1p5defg_nc_cli.py`
 
 ```bash
-python aifs_n320_grib_1p5defg_nc_cli.py --date 20260129
+python shared/aifs_n320_grib_1p5defg_nc_cli.py --date 20260129
 
 # For FP16:
-python aifs_n320_grib_1p5defg_nc_cli.py --date 20260129 --fp16
+python shared/aifs_n320_grib_1p5defg_nc_cli.py --date 20260129 --fp16
 ```
 
 - **Purpose:** Download GRIB files from GCS and regrid from N320 to 1.5 degree NetCDF
@@ -171,7 +186,7 @@ Each member runs in its own subprocess; `--max-workers N` runs N of them at once
 
 ```bash
 # Process 2 members concurrently
-python aifs_n320_grib_1p5defg_nc_cli.py --date 20260129 --fp16 --max-workers 2
+python shared/aifs_n320_grib_1p5defg_nc_cli.py --date 20260129 --fp16 --max-workers 2
 ```
 
 - **Default `--max-workers 1`** = sequential (unchanged behavior).
@@ -195,14 +210,14 @@ python aifs_n320_grib_1p5defg_nc_cli.py --date 20260129 --fp16 --max-workers 2
 
 ### Step 3b: Ensemble Quintile Analysis
 
-**File:** `ensemble_quintile_analysis_cli.py`
+**File:** `shared/ensemble_quintile_analysis_cli.py`
 
 ```bash
 # FP32 mode (uses icechunk by default for memory efficiency)
-python ensemble_quintile_analysis_cli.py --date 20260129
+python shared/ensemble_quintile_analysis_cli.py --date 20260129
 
 # FP16 mode
-python ensemble_quintile_analysis_cli.py --date 20260129 --fp16
+python shared/ensemble_quintile_analysis_cli.py --date 20260129 --fp16
 ```
 
 - **Purpose:** Download ensemble NetCDF from GCS, retrieve climatology, calculate quintile probabilities
@@ -211,17 +226,17 @@ python ensemble_quintile_analysis_cli.py --date 20260129 --fp16
 
 ### Step 3c: Forecast Submission
 
-**File:** `forecast_submission_cli.py`
+**File:** `shared/forecast_submission_cli.py`
 
 ```bash
 # FP32 submission
-python forecast_submission_cli.py --date 20260129
+python shared/forecast_submission_cli.py --date 20260129
 
 # FP16 submission
-python forecast_submission_cli.py --date 20260129 --fp16
+python shared/forecast_submission_cli.py --date 20260129 --fp16
 
 # Dry run (validate without submitting)
-python forecast_submission_cli.py --date 20260129 --dry-run
+python shared/forecast_submission_cli.py --date 20260129 --dry-run
 ```
 
 - **Purpose:** Submit quintile probabilities to AI Weather Quest competition
@@ -234,11 +249,11 @@ python forecast_submission_cli.py --date 20260129 --dry-run
 
 ### Step 3c (alt): Build AI-WQ individual files + zip (no live submission)
 
-**File:** `aiwq_individual_files_cli.py`
+**File:** `shared/aiwq_individual_files_cli.py`
 
 ```bash
 # Write the 6 per-variable/week DataArrays as individual AI-WQ files and zip them
-python aiwq_individual_files_cli.py --date 20260611 --fp16
+python shared/aiwq_individual_files_cli.py --date 20260611 --fp16
 # options: --variables tas pr mslp  --weeks 1 2  --save-dir DIR  --zip PATH
 ```
 
@@ -283,11 +298,11 @@ ECMWF Open Data → Pickle Files → GCS (YYYYMMDD_0000/input/)
 
 | GPU | VRAM | Pipeline Script | Precision | Chunks |
 |-----|------|----------------|-----------|--------|
-| A100 (80GB) | 80GB | `automate_aifs_gpu_pipeline.py` | FP32 | Default |
-| A100 (40GB) | 40GB | `automate_aifs_gpu_pipeline.py` | FP32 | 8 |
-| G2 (L4 24GB) | 24GB | `fp16_automate_aifs_gpu_pipeline.py` | FP16 | 16 |
-| A10G | 24GB | `fp16_automate_aifs_gpu_pipeline.py` | FP16 | 16 |
-| RTX 4090 | 24GB | `fp16_automate_aifs_gpu_pipeline.py` | FP16 | 16 |
+| A100 (80GB) | 80GB | `FahamuAIFSv1/automate_aifs_gpu_pipeline.py` | FP32 | Default |
+| A100 (40GB) | 40GB | `FahamuAIFSv1/automate_aifs_gpu_pipeline.py` | FP32 | 8 |
+| G2 (L4 24GB) | 24GB | `fp16FahamuAIFSv1/fp16_automate_aifs_gpu_pipeline.py` | FP16 | 16 |
+| A10G | 24GB | `fp16FahamuAIFSv1/fp16_automate_aifs_gpu_pipeline.py` | FP16 | 16 |
+| RTX 4090 | 24GB | `fp16FahamuAIFSv1/fp16_automate_aifs_gpu_pipeline.py` | FP16 | 16 |
 
 **Reference:** [HuggingFace Discussion #17](https://huggingface.co/ecmwf/aifs-ens-1.0/discussions/17)
 
@@ -304,7 +319,7 @@ An alternative pipeline using ERA5T data from the CEDA archive instead of ECMWF 
 This enables forecasts initialized from dates not covered by ECMWF Open Data (which only
 retains the most recent ~24h). ERA5T has a ~1 week lag from real time.
 
-For full technical documentation, see [`era5tFp16FahamuAIFSv1.md`](era5tFp16FahamuAIFSv1.md).
+For full technical documentation, see [`era5tFp16FahamuAIFSv1/era5tFp16FahamuAIFSv1.md`](era5tFp16FahamuAIFSv1/era5tFp16FahamuAIFSv1.md).
 
 ### Key Differences from Standard Pipeline
 
@@ -321,7 +336,7 @@ For full technical documentation, see [`era5tFp16FahamuAIFSv1.md`](era5tFp16Faha
 **Step 1: Create pkl files from CEDA** (ETL Machine)
 
 ```bash
-uv run ceda_era5t_pkl_input_aifsens.py
+uv run era5tFp16FahamuAIFSv1/ceda_era5t_pkl_input_aifsens.py
 ```
 
 Edit `DATE` in the script to set the initialization date. Requires `ceda_token` in `.env`.
@@ -330,7 +345,7 @@ Output: `gs://aifs-aiquest-us-20251127/era5t/YYYYMMDD/input_state_member_00*.pkl
 **Step 2: GPU Inference** (GPU Machine, >=24GB VRAM)
 
 ```bash
-python era5t_fp16_automate_aifs_gpu_pipeline.py \
+python era5tFp16FahamuAIFSv1/era5t_fp16_automate_aifs_gpu_pipeline.py \
     --date YYYYMMDD_0000 \
     --members 0-9 \
     --gcs-input-prefix era5t/YYYYMMDD \
@@ -344,7 +359,7 @@ ERA5T init date pkl files. For example, init date 20260227 → target date 20260
 **Step 3: GRIB to 1.5deg NetCDF** (ETL Machine)
 
 ```bash
-python era5t_aifs_n320_grib_1p5deg_nc_cli.py \
+python era5tFp16FahamuAIFSv1/era5t_aifs_n320_grib_1p5deg_nc_cli.py \
     --date YYYYMMDD_0000 \
     --members 0-9 \
     --gcs-input-subpath era5t_fp16_forecasts \
@@ -357,16 +372,18 @@ python era5t_aifs_n320_grib_1p5deg_nc_cli.py \
 **Step 4: Quintile Analysis** (ETL Machine)
 
 ```bash
-python era5t_ensemble_quintile_analysis_cli.py --date YYYYMMDD --members 0-9 --fp16
+python era5tFp16FahamuAIFSv1/era5t_ensemble_quintile_analysis_cli.py --date YYYYMMDD --members 0-9 --fp16
 ```
 
 **Step 5: Submit** (ETL Machine)
 
 ```bash
-python era5t_forecast_submission_cli.py --date YYYYMMDD
+python era5tFp16FahamuAIFSv1/era5t_forecast_submission_cli.py --date YYYYMMDD
 ```
 
 ### ERA5T Scripts Reference
+
+All ERA5T scripts live in `era5tFp16FahamuAIFSv1/`.
 
 | Script | Purpose |
 |--------|---------|
@@ -376,6 +393,7 @@ python era5t_forecast_submission_cli.py --date YYYYMMDD
 | `era5t_aifs_n320_grib_1p5deg_nc_cli.py` | GRIB → 1.5deg NetCDF regridding |
 | `era5t_ensemble_quintile_analysis_cli.py` | Quintile probability calculation |
 | `era5t_forecast_submission_cli.py` | AI Weather Quest submission |
+| `diagnose_quintile_bias.py` | Diagnostic: quintile bias inspection |
 
 ### ERA5T Execution Times and Costs
 
@@ -406,12 +424,12 @@ python era5t_forecast_submission_cli.py --date YYYYMMDD
 
 | Script | Execution Time | Environment | Cost (USD) | Notes |
 |--------|----------------|-------------|------------|-------|
-| `ecmwf_opendata_pkl_input_aifsens.py` | 2-2.5 hours | CPU (n2-standard-2) | ~$0.48-0.60 | Data preprocessing and GCS upload |
-| `automate_aifs_gpu_pipeline.py` | 6.5-7 hours | GPU (a2-ultragpu-1g) | ~$35-42 | FP32, 50 members, per-member processing |
-| `fp16_automate_aifs_gpu_pipeline.py` | 6.5-7 hours | GPU (g2-standard-12) | ~$15-20 | FP16, 50 members, reduced cost GPU |
-| `aifs_n320_grib_1p5defg_nc_cli.py` | 4-4.5 hours | CPU (n2-standard-2) | ~$0.96-1.08 | GRIB regridding and processing |
-| `ensemble_quintile_analysis_cli.py` | 15 minutes | CPU (n2-standard-2) | ~$0.06 | Ensemble analysis |
-| `forecast_submission_cli.py` | 5 minutes | CPU (n2-standard-2) | ~$0.02 | Submission validation |
+| `shared/ecmwf_opendata_pkl_input_aifsens.py` | 2-2.5 hours | CPU (n2-standard-2) | ~$0.48-0.60 | Data preprocessing and GCS upload |
+| `FahamuAIFSv1/automate_aifs_gpu_pipeline.py` | 6.5-7 hours | GPU (a2-ultragpu-1g) | ~$35-42 | FP32, 50 members, per-member processing |
+| `fp16FahamuAIFSv1/fp16_automate_aifs_gpu_pipeline.py` | 6.5-7 hours | GPU (g2-standard-12) | ~$15-20 | FP16, 50 members, reduced cost GPU |
+| `shared/aifs_n320_grib_1p5defg_nc_cli.py` | 4-4.5 hours | CPU (n2-standard-2) | ~$0.96-1.08 | GRIB regridding and processing |
+| `shared/ensemble_quintile_analysis_cli.py` | 15 minutes | CPU (n2-standard-2) | ~$0.06 | Ensemble analysis |
+| `shared/forecast_submission_cli.py` | 5 minutes | CPU (n2-standard-2) | ~$0.02 | Submission validation |
 
 ## Troubleshooting: HuggingFace Model Download Hangs
 
@@ -462,7 +480,7 @@ rm -f ~/.cache/huggingface/hub/.locks/models--ecmwf--aifs-ens-1.0/*.lock
 export HF_TOKEN="your_huggingface_token"
 
 # 4. Re-run the pipeline
-python era5t_fp16_automate_aifs_gpu_pipeline.py --date YYYYMMDD_0000 --members 0-4 ...
+python era5tFp16FahamuAIFSv1/era5t_fp16_automate_aifs_gpu_pipeline.py --date YYYYMMDD_0000 --members 0-4 ...
 ```
 
 ### Recommended: Pre-cache Model in Docker Image
@@ -509,7 +527,7 @@ snapshot_download('ecmwf/aifs-ens-1.0', cache_dir='/mnt/model-cache/huggingface'
 
 # Mount at runtime
 export HF_HOME=/mnt/model-cache/huggingface
-python era5t_fp16_automate_aifs_gpu_pipeline.py ...
+python era5tFp16FahamuAIFSv1/era5t_fp16_automate_aifs_gpu_pipeline.py ...
 ```
 
 #### Approach 3: Coiled Software Environment with Cached Model
