@@ -79,6 +79,53 @@ earthkit-regrid==0.5.1  ecmwf-opendata==0.3.29  'earthkit-data<1.0.0'
 flash-attn==2.7.4.post1  # cu12torch2.7 wheel
 ```
 
+## GPU Memory Profiling (Step 2)
+
+Before locking a GPU/precision/chunk choice for v2, profile peak VRAM with the PyTorch
+CUDA memory snapshot — the method from
+[aifs-ens-1.0 Discussion #17](https://huggingface.co/ecmwf/aifs-ens-1.0/discussions/17)
+and the ECMWF ["Anemoi Profiling" demo](https://events.ecmwf.int/event/466/timetable/).
+**aifs-ens-2.0 is a larger model than v1, so the v1 numbers are only a starting point —
+v2 must be re-profiled on its own GPU env.**
+
+The profiling scripts currently exist for v1
+(`FahamuAIFSv1/pytorch_profile_fp32.py`, `fp16FahamuAIFSv1/pytorch_profile_fp16.py`);
+they wrap a single-member inference between `torch.cuda.memory._record_memory_history()`
+and `_dump_snapshot()` and report `max_memory_allocated` / `max_memory_reserved`. For v2,
+run the same method against the `ecmwf/aifs-ens-2.0` checkpoint (clone the fp16 profiler
+to `fp16FahamuAIFSv2/pytorch_profile_fp16_v2.py`, swapping the checkpoint and pointing
+`--pickle-dir` at a v2 `input_v2` pkl).
+
+**Steps**
+
+1. **Stage one v2 input pkl** on the GPU box (so the profiler skips the download):
+   ```bash
+   gsutil cp gs://aifs-aiquest-us-20251127/<date>_0000/input_v2/input_state_member_001.pkl \
+       /scratch/input_states/
+   ```
+   (or use `--no-pickle` to fetch live).
+2. **Run the profiler** for the precision/chunks under test (start at FP16 + 16 chunks):
+   ```bash
+   python fp16FahamuAIFSv2/pytorch_profile_fp16_v2.py --chunks 16 --members 1 \
+       --lead-time 72 --pickle-dir /scratch/input_states --threshold 23.0
+   # tighter memory: --chunks 32 (or 64)
+   ```
+3. **Read the peaks**: the script prints `max_memory_allocated` / `max_memory_reserved`
+   (GB) and a summary; it flags a fail if reserved exceeds `--threshold` (default 23 GB)
+   and suggests raising `--chunks`.
+4. **Inspect the snapshot** at <https://pytorch.org/memory_viz> (upload the emitted
+   `*_memory_snapshot.pickle` / `*_gpu_mem.csv`) to see the allocation timeline.
+5. **Pick the config**: choose the smallest GPU whose VRAM clears the measured *reserved*
+   peak, then set the same `INFERENCE_PRECISION` / `INFERENCE_NUM_CHUNKS` in
+   `fp16_automate_aifs_gpu_pipeline_v2.py` (and `fp16_multi_run_AIFS_ENS_v2.py`).
+
+**v1 baseline for contrast (AIFS-ENS v1.0, Discussion #17)** — re-measure for v2:
+
+| Config | Peak allocated | Peak reserved | Fits 24 GB? |
+|--------|----------------|---------------|-------------|
+| FP32 (full) | — | >34 GB (real total >48 GB w/ CUDA workspace) | ❌ needs A100/H100 |
+| FP16 (`precision="16"`) + `NUM_CHUNKS=16` | ~20 GB | ~23 GB | ✅ L4 / A10G / RTX 4090 |
+
 ## Caveats / TODO
 
 - **earthkit-regrid:** the v2 notebook pins **0.5.1**; the repo `aifs-etl` env has
