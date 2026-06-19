@@ -26,6 +26,7 @@ file-map doc; code shared across models lives in `shared/`.
 | **FahamuAIFSv1** | ECMWF Open Data · FP32 (A100) | [`FahamuAIFSv1/FahamuAIFSv1.md`](FahamuAIFSv1/FahamuAIFSv1.md) |
 | **fp16FahamuAIFSv1** | ECMWF Open Data · FP16 (G2/L4) | [`fp16FahamuAIFSv1/fp16FahamuAIFSv1.md`](fp16FahamuAIFSv1/fp16FahamuAIFSv1.md) |
 | **era5tFp16FahamuAIFSv1** | CEDA ERA5T · FP16 | [`era5tFp16FahamuAIFSv1/era5tFp16FahamuAIFSv1.md`](era5tFp16FahamuAIFSv1/era5tFp16FahamuAIFSv1.md) |
+| **fp16FahamuAIFSv2** | ECMWF Open Data · FP16 · **AIFS-ENS-2.0** | [`fp16FahamuAIFSv2/fp16FahamuAIFSv2.md`](fp16FahamuAIFSv2/fp16FahamuAIFSv2.md) *(input prep only so far)* |
 
 `tools/` holds model-agnostic diagnostics and the non-CLI legacy scripts. The sections
 below document the FahamuAIFSv1 / fp16FahamuAIFSv1 pipeline (they share Steps 1, 3–5);
