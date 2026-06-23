@@ -104,6 +104,31 @@ def get_open_data(date, param, levelist=[], number=None, constant=False,
     return fields
 
 
+WAVE_DIR_COMPONENTS = ("cos_mwd", "sin_mwd")
+
+
+def drop_unencodable_wave_dir(state):
+    """Drop the model's ``cos_mwd``/``sin_mwd`` outputs before GRIB encoding.
+
+    The v2 input prep decomposes mean wave direction ``mwd`` into circular
+    components ``cos_mwd``/``sin_mwd``; the model emits them back. They are *not*
+    GRIB parameters, so ``GribFileOutput`` dies with ``ConceptNoMatchError:
+    Concept no match``. Recombining into ``mwd`` doesn't help — anemoi's
+    ``GribFileOutput`` only writes variables the checkpoint declares
+    (``typed_variables``), and ``mwd`` is not one (``KeyError: 'mwd'``).
+
+    So we drop the two components; every other output field (incl. the real wave
+    params ``swh``/``mwp``/``cdww``) encodes fine, and Step 3 only extracts
+    ``tp``/``msl``/``2t``. Recover wave direction if needed as
+    ``degrees(atan2(sin, cos))`` from the raw output. The yielded state is a
+    fresh per-step dict, so popping does not affect the autoregressive rollout.
+    """
+    fields = state["fields"]
+    for name in WAVE_DIR_COMPONENTS:
+        fields.pop(name, None)
+    return state
+
+
 def load_input_state_from_pickle(member, pickle_dir):
     """Load the pre-built 112-field input state for one member."""
     pickle_file = os.path.join(pickle_dir, f"input_state_member_{member:03d}.pkl")
@@ -179,6 +204,7 @@ def run_ensemble_member(runner, date, member, output_dir):
     outputs_initialized = False
 
     for state in runner.run(input_state=input_state, lead_time=LEAD_TIME):
+        drop_unencodable_wave_dir(state)   # cos_mwd/sin_mwd are not GRIB params
         if current_file_step == 0:
             if grib_output is not None:
                 grib_output.close()

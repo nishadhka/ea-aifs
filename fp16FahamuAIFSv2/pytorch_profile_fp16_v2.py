@@ -73,6 +73,7 @@ DEFAULT_NUM_CHUNKS = 16
 SNAPSHOT_FILE = "aifs_ens_fp16_v2_memory_snapshot.pickle"
 MEMORY_LOG_FILE = "aifs_ens_fp16_v2_gpu_mem.csv"
 SUMMARY_FILE = "fp16_v2_profile_summary.txt"
+PLOT_FILE = "aifs_ens_fp16_v2_memory_timeline.png"
 
 # Memory threshold for 24GB GPU (with safety margin)
 MEMORY_THRESHOLD_GB = 23.0
@@ -106,6 +107,32 @@ def get_open_data(date, param, levelist=[], number=None, constant=False,
     for name, values in fields.items():
         fields[name] = np.stack(values)
     return fields
+
+
+WAVE_DIR_COMPONENTS = ("cos_mwd", "sin_mwd")
+
+
+def drop_unencodable_wave_dir(state):
+    """Drop the model's ``cos_mwd``/``sin_mwd`` outputs before GRIB encoding.
+
+    The v2 input prep decomposes mean wave direction ``mwd`` into circular
+    components ``cos_mwd``/``sin_mwd``; the model emits them back. They are *not*
+    GRIB parameters, so ``GribFileOutput`` dies with ``ConceptNoMatchError:
+    Concept no match``. Recombining them into ``mwd`` doesn't help either —
+    anemoi's ``GribFileOutput`` only writes variables the checkpoint declares
+    (``typed_variables``), and ``mwd`` is not one (``KeyError: 'mwd'``).
+
+    So we drop the two components here; every other output field (incl. the real
+    wave params ``swh``/``mwp``/``cdww``) encodes fine, and the downstream
+    extraction (Step 3) only needs ``tp``/``msl``/``2t``. If wave *direction* is
+    ever needed, recover it from the raw output as ``degrees(atan2(sin, cos))``.
+    The yielded state is a fresh per-step dict, so popping does not affect the
+    autoregressive rollout.
+    """
+    fields = state["fields"]
+    for name in WAVE_DIR_COMPONENTS:
+        fields.pop(name, None)
+    return state
 
 
 def load_input_state_from_pickle(member, pickle_dir):
@@ -213,6 +240,7 @@ def run_ensemble_member_fp16(runner, date, member, output_dir, lead_time):
 
     with torch.no_grad():
         for state in runner.run(input_state=input_state, lead_time=lead_time):
+            drop_unencodable_wave_dir(state)   # cos_mwd/sin_mwd are not GRIB params
             if current_file_step == 0:
                 if grib_output is not None:
                     grib_output.close()
@@ -309,10 +337,62 @@ def print_gpu_info():
     return total_gb
 
 
+def write_memory_plot(output_dir, results, gpu_memory_gb, precision, num_chunks):
+    """Render a per-step VRAM timeline PNG from the collected memory readings.
+
+    One line per metric (current / peak-allocated / peak-reserved) per member,
+    with the GPU-total and threshold drawn as reference lines. Saved as a PNG so
+    it can drop straight into docs (complements the interactive
+    ``*_memory_snapshot.pickle`` for pytorch.org/memory_viz).
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("  (matplotlib not installed — skipping PNG; pip install matplotlib)")
+        return None
+
+    plotted = [r for r in results if r.get("memory_readings")]
+    if not plotted:
+        print("  (no per-step readings — skipping PNG)")
+        return None
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for r in plotted:
+        hrs = [m["hour"] for m in r["memory_readings"]]
+        ax.plot(hrs, [m["current"] for m in r["memory_readings"]],
+                marker="o", ms=3, label=f"m{r['member']} current")
+        ax.plot(hrs, [m["allocated"] for m in r["memory_readings"]],
+                marker="^", ms=3, ls="--", label=f"m{r['member']} peak-alloc")
+        ax.plot(hrs, [m["reserved"] for m in r["memory_readings"]],
+                marker="s", ms=3, ls=":", label=f"m{r['member']} peak-reserved")
+    ax.axhline(gpu_memory_gb, color="red", lw=1.2, label=f"GPU total {gpu_memory_gb:.1f} GB")
+    ax.axhline(MEMORY_THRESHOLD_GB, color="orange", lw=1.0, ls="--",
+               label=f"threshold {MEMORY_THRESHOLD_GB:.0f} GB")
+    ax.set_xlabel("Forecast lead time (hours)")
+    ax.set_ylabel("GPU memory (GB)")
+    ax.set_title(f"AIFS-ENS-2.0 FP{precision} VRAM — {num_chunks} chunks "
+                 f"({plotted[0].get('peak_reserved_gb', 0):.1f} GB peak reserved)")
+    ax.set_ylim(0, max(gpu_memory_gb, MEMORY_THRESHOLD_GB) * 1.05)
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=7, ncol=2, loc="upper left")
+    fig.tight_layout()
+    plot_path = os.path.join(output_dir, PLOT_FILE)
+    fig.savefig(plot_path, dpi=130)
+    plt.close(fig)
+    print(f"Memory timeline PNG: {plot_path}")
+    return plot_path
+
+
 def write_summary(output_dir, results, total_time, gpu_memory_gb, precision, num_chunks):
     """Write profiling summary to file."""
     summary_file = os.path.join(output_dir, SUMMARY_FILE)
-    all_passed = all(not r["exceeded_threshold"] for r in results)
+    # PASS only if at least one member ran AND every member both completed
+    # (produced output) and stayed under threshold. An empty results list — or a
+    # member that errored before any step — is a FAIL, not a silent PASS.
+    all_passed = bool(results) and all(
+        r.get("success") and not r["exceeded_threshold"] for r in results)
 
     with open(summary_file, "w") as f:
         f.write("=" * 70 + "\n")
@@ -472,18 +552,32 @@ Note: aifs-ens-2.0 is larger than v1 — re-measure; v1 fit ~23 GB at 16 chunks.
             print(f"Error profiling member {member}: {e}")
             import traceback
             traceback.print_exc()
+            # Record the failure so it surfaces in the summary / exit code,
+            # instead of silently leaving `results` empty (which read as PASS).
+            results.append({"member": member, "success": False,
+                            "exceeded_threshold": True, "peak_allocated_gb": 0.0,
+                            "peak_reserved_gb": 0.0, "max_inference_gb": 0.0,
+                            "steps": 0, "file_size_mb": 0, "memory_readings": [],
+                            "error": str(e)})
             continue
 
     total_time = time.time() - start_time
 
     print("\nSaving PyTorch memory snapshot...")
     snapshot_path = os.path.join(args.output_dir, SNAPSHOT_FILE)
-    torch.cuda.memory._dump_snapshot(snapshot_path)
+    try:
+        torch.cuda.memory._dump_snapshot(snapshot_path)
+        print(f"Saved: {snapshot_path}")
+    except Exception as e:
+        # _dump_snapshot can raise (e.g. RuntimeError: stoi) under
+        # expandable_segments:True or when no allocations were recorded. The
+        # PNG/CSV already capture the profile, so don't fail the run over this.
+        print(f"  (snapshot dump skipped: {e})")
     torch.cuda.memory._record_memory_history(enabled=None)
-    print(f"Saved: {snapshot_path}")
 
     all_passed = write_summary(args.output_dir, results, total_time, gpu_memory_gb,
                                args.precision, args.chunks)
+    write_memory_plot(args.output_dir, results, gpu_memory_gb, args.precision, args.chunks)
 
     print("\n" + "=" * 70)
     if all_passed:
@@ -496,7 +590,8 @@ Note: aifs-ens-2.0 is larger than v1 — re-measure; v1 fit ~23 GB at 16 chunks.
         print("TEST FAILED: Memory exceeded 24GB threshold")
         print("  Try: --chunks 32 (or 64), or inspect the snapshot for leaks")
     print(f"\nTotal time: {total_time:.2f} seconds")
-    print(f"Output files in {args.output_dir}/: {SNAPSHOT_FILE}, {MEMORY_LOG_FILE}, {SUMMARY_FILE}")
+    print(f"Output files in {args.output_dir}/: {SNAPSHOT_FILE}, {MEMORY_LOG_FILE}, "
+          f"{SUMMARY_FILE}, {PLOT_FILE}")
 
     sys.exit(0 if all_passed else 1)
 
