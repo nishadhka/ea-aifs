@@ -215,6 +215,17 @@ python shared/aifs_n320_grib_1p5defg_nc_cli.py --date 20260129 --fp16 --max-work
   once and reuses it. Override the workdir root with `EARTHKIT_WORKDIR=/path`.
 - **Don't double-launch.** Two parent runs over the same `--members` just duplicate
   work and race on GCS output — run one launcher with `--max-workers`, not two.
+- **Surface-only regrid (~7× faster, all modes).** The script now selects the 3 target
+  surface params (`msl/tp/2t`) **before** N320→1.5° interpolation instead of regridding
+  the whole GRIB and extracting afterwards. `earthkit-regrid` does a matrix multiply per
+  field, so regridding 36 surface fields instead of the full ~1416-field GRIB (mostly
+  pressure levels) cut per-member time from **~7.6 min → ~1.1 min** (measured on the v2
+  50-member run; same 5.7→1.1 min drop on one member in a controlled same-env test). It
+  falls back to the full FieldList if the select fails, so v1/fp16/fp32 are unaffected in
+  output and get the same speedup. This change was required for `--v2` (aifs-ens-2.0 GRIB
+  can't be `to_xarray()`'d whole — see
+  [`fp16FahamuAIFSv2/README.md`](fp16FahamuAIFSv2/README.md#why-v2-regrid-is-7-faster-than-the-old-v1-timing)).
+  The 4–4.5 h figure in the cost table below predates this and now overestimates.
 
 ### Step 3b: Ensemble Quintile Analysis
 

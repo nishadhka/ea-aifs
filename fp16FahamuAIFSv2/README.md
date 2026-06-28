@@ -102,8 +102,28 @@ python fp16FahamuAIFSv2/fp16_automate_aifs_gpu_pipeline_v2.py \
   > pressure-level dimension (`t/u/v/w/z` = 14 levels incl. 10 hPa, but `q` = 13 because
   > `q_10` is dropped). A naïve full `to_xarray()` fails with *"inconsistent dimension
   > levelist 13 != 14"*. `aifs_n320_grib_1p5defg_nc_cli.py` selects the surface params
-  > (`msl/tp/2t`) **before** conversion, which avoids the conflict and skips ~1.4 GB of
-  > PL fields per file (member ≈ 1.1 min instead of 5.7).
+  > (`msl/tp/2t`) **before** conversion, which avoids the conflict.
+
+### Why v2 regrid is ~7× faster than the old v1 timing
+
+Selecting the 3 surface params before interpolation is also a large speedup, and explains
+the big drop in per-member wall-clock vs the historical v1 figure:
+
+| Regrid path | Fields interpolated per 72 h file | Per-member time |
+|-------------|-----------------------------------|-----------------|
+| Original (full FieldList → extract after) | **~1416** (mostly pressure levels: `q/t/u/v/w/z` × 13–14 lvl × 12 steps) | **~7.6 min** (v1 doc) / 5.7 min (v2 env, member 001) |
+| Surface-only (`fl.sel(param=['msl','tp','2t'])` → interpolate) | **36** (3 vars × 12 steps) | **~1.1 min** (measured, 50-member run) |
+
+`earthkit-regrid` applies a sparse N320→1.5° matrix multiply **per field**, so cost scales
+with field count. The old path regridded the *entire* GRIB (~1416 fields) and only then
+kept `tp/msl/2t` — ~40× more interpolation than needed. Selecting the 3 surface params up
+front makes GCS download the new floor. Measured on the same 2-vCPU ETL box: member 001
+went **5.7 → 1.1 min** (full vs surface-only, identical env), and the full 50-member v2 run
+held a steady **1.1–1.3 min/member**.
+
+**This is not a v1-vs-v2 model difference** — it's the pre-selection optimisation in the
+shared CLI. It falls back to the full FieldList only if the select fails, so **v1/fp16
+runs get the same speedup** if re-run on the current script.
 
 ## GPU software environment (Step 2)
 
