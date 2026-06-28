@@ -66,8 +66,20 @@ python fp16FahamuAIFSv2/fp16_automate_aifs_gpu_pipeline_v2.py \
   Needs an Ampere+ GPU and the v2 software env (below).
 - **Steps 3–5:** reuse the `shared/` CLIs with the **`--v2`** flag (added for this model).
   It switches the GCS subpaths to the `fp16_v2_*` namespace and the submission model name,
-  leaving v1/fp16 behaviour untouched. Run from this folder so `coiled-data.json` and `.env`
-  resolve:
+  leaving v1/fp16 behaviour untouched.
+
+  **ETL software env (Steps 3–5).** Build a CPU env pinned to the **v2 `earthkit-regrid
+  0.5.1`** (the same regrid version the v2 input-prep/inference uses; the v1 `aifs-etl`
+  env's 0.4.0 also works for regrid but the v2 pipeline standardises on 0.5.1):
+
+  ```bash
+  micromamba create -y -n aifs-etl -c conda-forge python=3.12.7 \
+      earthkit-data "earthkit-regrid=0.5.1" google-cloud-storage xarray netcdf4 icechunk
+  # for the quintile + submission steps also add:  pip install python-dotenv AI_WQ_package
+  micromamba activate aifs-etl
+  ```
+
+  Then run from this folder so `coiled-data.json` and `.env` resolve:
 
   ```bash
   # 3a — regrid:  reads <date>_0000/fp16_v2_forecasts/  ->  writes <date>_0000/fp16_v2_1p5deg_nc/
@@ -85,6 +97,13 @@ python fp16FahamuAIFSv2/fp16_automate_aifs_gpu_pipeline_v2.py \
   `--v2` submits under **`fp16FahamuAIFSv2`** without needing `AIWQ_MODEL_NAME_V2`.
   The Coiled service account `coiled-data.json` (here:
   `coiled-data@sewaa-416306`) provides GCS access; AI-WQ climatology + submission use `.env`.
+
+  > **v2 regrid note (handled in code):** aifs-ens-2.0 GRIB has an inconsistent
+  > pressure-level dimension (`t/u/v/w/z` = 14 levels incl. 10 hPa, but `q` = 13 because
+  > `q_10` is dropped). A naïve full `to_xarray()` fails with *"inconsistent dimension
+  > levelist 13 != 14"*. `aifs_n320_grib_1p5defg_nc_cli.py` selects the surface params
+  > (`msl/tp/2t`) **before** conversion, which avoids the conflict and skips ~1.4 GB of
+  > PL fields per file (member ≈ 1.1 min instead of 5.7).
 
 ## GPU software environment (Step 2)
 

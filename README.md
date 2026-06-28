@@ -55,6 +55,10 @@ micromamba create -n aifs-etl -c conda-forge python=3.12.7 \
   && sudo apt update && sudo apt install nano
 ```
 
+> **AIFS-ENS-2.0 (`fp16FahamuAIFSv2`, `--v2`):** the v2 pipeline standardises on
+> **`earthkit-regrid 0.5.1`** (vs 0.4.0 above). Use the v2 ETL env-creation command in
+> [`fp16FahamuAIFSv2/README.md`](fp16FahamuAIFSv2/README.md#run) for Steps 3–5.
+
 ### Credentials Setup
 
 Copy the `.env.example` file to `.env` and fill in your credentials:
