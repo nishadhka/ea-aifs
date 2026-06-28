@@ -301,15 +301,30 @@ class GRIBToNetCDFProcessor:
 
     def process_single_grib(self, grib_file: str) -> Optional[xr.Dataset]:
         """Process a single GRIB file and return extracted dataset (loaded in memory)."""
-        fl = fl_ll_1p5 = None
+        fl = fl_sel = fl_ll_1p5 = None
         ds = extracted_ds = result = None
         try:
             # Open GRIB (Earthkit FieldList)
             fl = ekd.from_source("file", grib_file)
 
+            # Select only the surface target params (msl/tp/2t) BEFORE conversion.
+            # Required for AIFS-ENS-2.0 (--v2) output: its pressure-level fields have
+            # an inconsistent `levelist` dimension — t/u/v/w/z carry 14 levels (incl.
+            # the new 10 hPa) but q carries 13 (q_10 is dropped in the v2 input prep) —
+            # so a full to_xarray() raises "inconsistent dimension levelist 13 != 14".
+            # We only ever extract the surface vars here, so selecting them up front
+            # sidesteps the conflict and is much lighter (skips ~1.4 GB of PL fields).
+            # For v1/fp16 the selection is equivalent (same 3 vars), just faster.
+            target_params = list(self.var_mapping.values())  # ['msl', 'tp', '2t']
+            try:
+                fl_sel = fl.sel(param=target_params)
+            except Exception:
+                fl_sel = None
+            source_fl = fl_sel if (fl_sel is not None and len(fl_sel) > 0) else fl
+
             # Regrid from N320 to 1.5° regular lon/lat
             fl_ll_1p5 = ekr.interpolate(
-                fl, in_grid={"grid": "N320"}, out_grid={"grid": [1.5, 1.5]}
+                source_fl, in_grid={"grid": "N320"}, out_grid={"grid": [1.5, 1.5]}
             )
 
             # Convert to xarray and detach from files
@@ -334,6 +349,7 @@ class GRIBToNetCDFProcessor:
             print(f"      ❌ Error processing GRIB: {e}")
         finally:
             self._safe_close(fl_ll_1p5)
+            self._safe_close(fl_sel)
             self._safe_close(fl)
             for obj in [extracted_ds, ds]:
                 try:
@@ -341,7 +357,7 @@ class GRIBToNetCDFProcessor:
                         obj.close()
                 except Exception:
                     pass
-            del extracted_ds, ds, fl_ll_1p5, fl
+            del extracted_ds, ds, fl_ll_1p5, fl_sel, fl
             gc.collect()
         return result
 
