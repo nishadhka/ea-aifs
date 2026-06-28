@@ -64,9 +64,27 @@ python fp16FahamuAIFSv2/fp16_automate_aifs_gpu_pipeline_v2.py \
   unless `--no-upload`. CPU only. `--source` picks the mirror (`ecmwf`/`azure`/`aws`/`google`).
 - **Step 2 output:** `gs://…/<date>_0000/fp16_v2_forecasts/aifs_ens_forecast_<date>_memberNNN_h*.grib`.
   Needs an Ampere+ GPU and the v2 software env (below).
-- **Steps 3–5:** reuse `shared/aifs_n320_grib_1p5defg_nc_cli.py` (point
-  `--gcs-input-subpath fp16_v2_forecasts`), then the `shared/` quintile + submission CLIs
-  (submit under a new `AIWQ_MODEL_NAME_V2`).
+- **Steps 3–5:** reuse the `shared/` CLIs with the **`--v2`** flag (added for this model).
+  It switches the GCS subpaths to the `fp16_v2_*` namespace and the submission model name,
+  leaving v1/fp16 behaviour untouched. Run from this folder so `coiled-data.json` and `.env`
+  resolve:
+
+  ```bash
+  # 3a — regrid:  reads <date>_0000/fp16_v2_forecasts/  ->  writes <date>_0000/fp16_v2_1p5deg_nc/
+  python ../shared/aifs_n320_grib_1p5defg_nc_cli.py --date 20260625_0000 --members 1-50 --v2
+
+  # 3b — quintiles:  reads fp16_v2_1p5deg_nc/  ->  writes ensemble_quintile_probabilities_20260625_v2.nc
+  python ../shared/ensemble_quintile_analysis_cli.py --date 20260625 --v2
+
+  # 3c — submit:  uses ..._v2.nc + the v2 model name
+  python ../shared/forecast_submission_cli.py --date 20260625 --v2          # add --dry-run to validate
+  ```
+
+  Submission model name resolves as `AIWQ_MODEL_NAME_V2` → `AIWQ_MODEL_NAME_FP16` →
+  `AIWQ_MODEL_NAME`. This folder's `.env` sets `AIWQ_MODEL_NAME_FP16=fp16FahamuAIFSv2`, so
+  `--v2` submits under **`fp16FahamuAIFSv2`** without needing `AIWQ_MODEL_NAME_V2`.
+  The Coiled service account `coiled-data.json` (here:
+  `coiled-data@sewaa-416306`) provides GCS access; AI-WQ climatology + submission use `.env`.
 
 ## GPU software environment (Step 2)
 

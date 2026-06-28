@@ -167,7 +167,8 @@ def parse_member_range(member_str: str) -> List[int]:
 
 class GRIBToNetCDFProcessor:
     def __init__(self, date_str: str, members: List[int], fp16: bool = False, skip_upload: bool = False,
-                 bucket: str = "aifs-aiquest-us-20251127", service_account: str = "coiled-data.json"):
+                 bucket: str = "aifs-aiquest-us-20251127", service_account: str = "coiled-data.json",
+                 v2: bool = False):
         """
         Initialize processor with configurable date, members, and precision mode.
 
@@ -178,6 +179,9 @@ class GRIBToNetCDFProcessor:
             skip_upload: If True, skip uploading NetCDF files to GCS (for testing)
             bucket: GCS bucket name
             service_account: Path to GCS service account key
+            v2: If True, use AIFS-ENS-2.0 paths (fp16_v2_forecasts/, fp16_v2_1p5deg_nc/).
+                Takes precedence over fp16. GRIB filenames are identical to v1 for the
+                432-792h windows, so only the GCS subpaths change.
         """
         self.skip_upload = skip_upload
         # GCS Configuration
@@ -194,9 +198,14 @@ class GRIBToNetCDFProcessor:
 
         self.date_prefix = f"{self.forecast_date}_{self.forecast_time}"
 
-        # Set paths based on FP16 flag
-        self.fp16 = fp16
-        if fp16:
+        # Set paths based on v2 / FP16 flags (v2 takes precedence over fp16)
+        self.v2 = v2
+        self.fp16 = fp16 or v2
+        if v2:
+            self.gcs_input_prefix = f"{self.date_prefix}/fp16_v2_forecasts/"
+            self.gcs_output_prefix = f"{self.date_prefix}/fp16_v2_1p5deg_nc/"
+            self.mode_label = "FP16-v2"
+        elif fp16:
             self.gcs_input_prefix = f"{self.date_prefix}/fp16_forecasts/"
             self.gcs_output_prefix = f"{self.date_prefix}/fp16_1p5deg_nc/"
             self.mode_label = "FP16"
@@ -734,6 +743,8 @@ def _run_member_subprocess(member: int, args, base_workdir: str, slot=None):
     ]
     if args.fp16:
         cmd.append('--fp16')
+    if args.v2:
+        cmd.append('--v2')
     if args.no_upload:
         cmd.append('--no-upload')
 
@@ -760,6 +771,10 @@ GCS Path Structure:
         Input:  gs://bucket/{date}/fp16_forecasts/
         Output: gs://bucket/{date}/fp16_1p5deg_nc/
 
+    v2 / AIFS-ENS-2.0 (--v2 flag):
+        Input:  gs://bucket/{date}/fp16_v2_forecasts/
+        Output: gs://bucket/{date}/fp16_v2_1p5deg_nc/
+
 Examples:
     # Process members 1-50 for FP32 forecasts
     python aifs_n320_grib_1p5defg_nc_cli.py --date 20251127_0000 --members 1-50
@@ -781,6 +796,9 @@ Examples:
                        help='Member range (e.g., 1-50, 1,2,3)')
     parser.add_argument('--fp16', action='store_true',
                        help='Use FP16 paths (fp16_forecasts/ -> fp16_1p5deg_nc/)')
+    parser.add_argument('--v2', action='store_true',
+                       help='Use AIFS-ENS-2.0 paths (fp16_v2_forecasts/ -> fp16_v2_1p5deg_nc/). '
+                            'Takes precedence over --fp16.')
     parser.add_argument('--no-upload', action='store_true',
                        help='Skip uploading NetCDF files to GCS (for testing)')
     parser.add_argument('--bucket', default='aifs-aiquest-us-20251127',
@@ -808,7 +826,8 @@ Examples:
             fp16=args.fp16,
             skip_upload=args.no_upload,
             bucket=args.bucket,
-            service_account=args.service_account
+            service_account=args.service_account,
+            v2=args.v2
         )
         # Process just this one member
         if not processor.initialize_gcs():
@@ -848,8 +867,9 @@ Examples:
             print(f"⚠️  May OOM (no swap). Safe worker count at this estimate: {safe}. "
                   f"Continuing as requested — reduce --max-workers if members get killed.")
 
+    _mode = 'FP16-v2' if args.v2 else ('FP16' if args.fp16 else 'FP32')
     print("=" * 70)
-    print(f"GRIB to NetCDF Processor ({'FP16' if args.fp16 else 'FP32'} Mode) — "
+    print(f"GRIB to NetCDF Processor ({_mode} Mode) — "
           f"{max_workers}-way subprocess mode")
     print("=" * 70)
 

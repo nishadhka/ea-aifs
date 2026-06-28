@@ -176,10 +176,13 @@ python shared/aifs_n320_grib_1p5defg_nc_cli.py --date 20260129
 
 # For FP16:
 python shared/aifs_n320_grib_1p5defg_nc_cli.py --date 20260129 --fp16
+
+# For AIFS-ENS-2.0 (fp16FahamuAIFSv2):
+python shared/aifs_n320_grib_1p5defg_nc_cli.py --date 20260129 --v2
 ```
 
 - **Purpose:** Download GRIB files from GCS and regrid from N320 to 1.5 degree NetCDF
-- **Output:** NetCDF files in `gs://aifs-aiquest-us-20251127/YYYYMMDD_0000/1p5deg_nc/` (or `fp16_1p5deg_nc/`)
+- **Output:** NetCDF files in `gs://aifs-aiquest-us-20251127/YYYYMMDD_0000/1p5deg_nc/` (or `fp16_1p5deg_nc/`, or `fp16_v2_1p5deg_nc/` with `--v2`)
 
 #### Parallel processing — `--max-workers`
 
@@ -219,10 +222,13 @@ python shared/ensemble_quintile_analysis_cli.py --date 20260129
 
 # FP16 mode
 python shared/ensemble_quintile_analysis_cli.py --date 20260129 --fp16
+
+# AIFS-ENS-2.0 mode (reads fp16_v2_1p5deg_nc/)
+python shared/ensemble_quintile_analysis_cli.py --date 20260129 --v2
 ```
 
 - **Purpose:** Download ensemble NetCDF from GCS, retrieve climatology, calculate quintile probabilities
-- **Output:** `ensemble_quintile_probabilities_YYYYMMDD.nc` (or `_fp16.nc`)
+- **Output:** `ensemble_quintile_probabilities_YYYYMMDD.nc` (or `_fp16.nc`, or `_v2.nc` with `--v2`)
 - **Requires:** `.env` file with `AIWQ_PASSWORD` for climatology retrieval, `coiled-data.json` for GCS access
 
 ### Step 3c: Forecast Submission
@@ -236,12 +242,16 @@ python shared/forecast_submission_cli.py --date 20260129
 # FP16 submission
 python shared/forecast_submission_cli.py --date 20260129 --fp16
 
+# AIFS-ENS-2.0 submission (uses ..._v2.nc + AIWQ_MODEL_NAME_V2/AIWQ_MODEL_NAME_FP16)
+python shared/forecast_submission_cli.py --date 20260129 --v2
+
 # Dry run (validate without submitting)
 python shared/forecast_submission_cli.py --date 20260129 --dry-run
 ```
 
 - **Purpose:** Submit quintile probabilities to AI Weather Quest competition
 - **Requires:** `.env` file with `AIWQ_TEAM_NAME`, `AIWQ_MODEL_NAME`, and `AIWQ_PASSWORD`
+  (for `--v2`, `AIWQ_MODEL_NAME_V2` or `AIWQ_MODEL_NAME_FP16`)
 - **Submits:** 3 variables (mslp, pr, tas) x 2 weeks = 6 forecasts per run
 - **Submission window:** AI-WQ accepts a forecast only within **init date → init+3 days**
   (e.g. `20260611` was open `20260611`–`20260614`). Outside it the server rejects with
