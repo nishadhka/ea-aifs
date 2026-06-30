@@ -74,10 +74,19 @@ python fp16FahamuAIFSv2/fp16_automate_aifs_gpu_pipeline_v2.py \
 
   ```bash
   micromamba create -y -n aifs-etl -c conda-forge python=3.12.7 \
-      earthkit-data "earthkit-regrid=0.5.1" google-cloud-storage xarray netcdf4 icechunk
-  # for the quintile + submission steps also add:  pip install python-dotenv AI_WQ_package
+      earthkit-data "earthkit-regrid=0.5.1" google-cloud-storage xarray netcdf4 icechunk python-dotenv
   micromamba activate aifs-etl
+
+  # REQUIRED for the quintile (3b) + submission (3c/3d) steps — not on conda-forge:
+  pip install AI_WQ_package python-dotenv
   ```
+
+  > **Why this matters:** the quintile CLI (3b) needs `AI_WQ_package` to fetch the 20-yr
+  > quintile **climatology** from the AI-WQ server (`ftp.ecmwf.int`, public — no password).
+  > If the package is missing it does **not** error loudly — it prints
+  > `AI_WQ_package not available, using local climatology files`, silently falls back to
+  > local files that don't exist, and ends with `No quintile data calculated`. If you see
+  > that, the fix is `pip install AI_WQ_package`, **not** a server/FTP problem.
 
   Then run from this folder so `coiled-data.json` and `.env` resolve:
 
@@ -90,7 +99,19 @@ python fp16FahamuAIFSv2/fp16_automate_aifs_gpu_pipeline_v2.py \
 
   # 3c — submit:  uses ..._v2.nc + the v2 model name
   python ../shared/forecast_submission_cli.py --date 20260625 --v2          # add --dry-run to validate
+
+  # 3d — out-of-window only:  build + zip the per-variable/week AI-WQ files for a manual upload
+  python ../shared/aiwq_individual_files_cli.py --date 20260625 --v2
   ```
+
+  > **Submission window:** the live endpoint (3c) only accepts a forecast start date within
+  > its window (`start_date` → `start_date + 3 days`). Outside it you get
+  > *"You are not allowed to submit a forecast for … at this point in time"* — this is a
+  > closed window, not an auth/FTP failure. For archival or a manual portal upload of a
+  > past-window date, use **3d**: it reuses the exact submission prep but writes each
+  > populated DataArray to `{var}_{date}_p{week}_{team}_{model}.nc` under
+  > `./aiwq_individual_<date>/` and bundles them into
+  > `aiwq_submission_<date>_<team>_<model>.zip` (it does **not** submit).
 
   Submission model name resolves as `AIWQ_MODEL_NAME_V2` → `AIWQ_MODEL_NAME_FP16` →
   `AIWQ_MODEL_NAME`. This folder's `.env` sets `AIWQ_MODEL_NAME_FP16=fp16FahamuAIFSv2`, so
