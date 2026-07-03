@@ -58,6 +58,14 @@ micromamba create -n aifs-etl -c conda-forge python=3.12.7 \
 > **AIFS-ENS-2.0 (`fp16FahamuAIFSv2`, `--v2`):** the v2 pipeline standardises on
 > **`earthkit-regrid 0.5.1`** (vs 0.4.0 above). Use the v2 ETL env-creation command in
 > [`fp16FahamuAIFSv2/README.md`](fp16FahamuAIFSv2/README.md#run) for Steps 3–5.
+>
+> **Pin `earthkit-data<1.0.0`.** The `earthkit-data` above is unpinned and now resolves to
+> **1.0.0**, whose changed source API breaks the ETL scripts: `from_source(...)` returns a
+> non-iterable `GribData` (`TypeError: 'GribData' object is not iterable`; `len()` raises
+> `ImportError: cannot import name 'convert_array'` against earthkit-utils 0.3.0). Pin
+> `"earthkit-data<1.0.0"` (solves to 0.20.0). Repair an already-drifted env with
+> `micromamba install -n aifs-etl -c conda-forge 'earthkit-data<1.0.0' 'earthkit-regrid=0.5.1'`.
+> See *Troubleshooting: Open-Data Input Prep Hangs* below.
 
 ### Credentials Setup
 
@@ -587,6 +595,65 @@ python -c "from huggingface_hub import snapshot_download; snapshot_download('ecm
 | Volume mount | Flexible, shared across instances | Requires persistent disk setup, mount configuration |
 
 For operational forecast pipelines where reliability and speed matter, **Docker pre-caching is strongly recommended**. It converts a flaky runtime network dependency into a deterministic build-time step.
+
+---
+
+
+## Troubleshooting: Open-Data Input Prep Hangs at "surface fields..."
+
+### Symptom
+
+`ecmwf_opendata_pkl_input_aifsens_v2.py` (Step 1, ETL) prints the first line and then
+hangs indefinitely with no further output:
+
+```
+Creating v2.0 input state for ensemble member 1
+  surface fields...
+```
+
+### Root Cause
+
+Two independent issues, both unrelated to the `--source` mirror (AWS/ECMWF/Azure/Google):
+
+1. **`earthkit-data` drifted to 1.0.0.** Its changed source API returns a non-iterable
+   `GribData`, so the script's `for f in data:` loop dies (`TypeError: 'GribData' object is
+   not iterable`; `len()` → `ImportError: cannot import name 'convert_array'`). Pin
+   `earthkit-data<1.0.0` (see *Software Installation*).
+2. **A suspended (`^Z`) or wedged prep process holds the open-data download lock.**
+   `earthkit-data` serialises downloads with a file lock
+   (`/tmp/earthkit-data-*/e-odretriever-*.cache.lock`). Ctrl-Z **suspends** the process
+   without releasing the lock, so every *new* run blocks forever at the first download.
+   **Stop runs with Ctrl-C (SIGINT), never Ctrl-Z.**
+
+The first `ekr.interpolate` call also does a one-time N320 matrix download (tens of
+seconds) — that is normal, not a hang.
+
+### Diagnosis
+
+```bash
+# Env drift — should be earthkit-data 0.20.x / earthkit-regrid 0.5.1
+python -c "import earthkit.data as d, earthkit.regrid as r; print(d.__version__, r.__version__)"
+
+# Suspended/stuck prep processes ('T' = stopped) and the stale lock
+ps -o pid,stat,cmd $(pgrep -f ecmwf_opendata_pkl_input_aifsens_v2)
+ls -la /tmp/earthkit-data-*/*.cache.lock
+```
+
+### Fix: Kill Stuck Jobs, Clear the Lock, Retry
+
+```bash
+# 1. Kill any suspended/stuck prep processes (SIGCONT so a stopped proc can receive SIGKILL)
+for p in $(pgrep -f ecmwf_opendata_pkl_input_aifsens_v2); do kill -CONT $p; kill -9 $p; done
+
+# 2. Remove the stale download lock(s)
+rm -f /tmp/earthkit-data-*/*.cache.lock
+
+# 3. Repair the env if drifted
+micromamba install -n aifs-etl -c conda-forge 'earthkit-data<1.0.0' 'earthkit-regrid=0.5.1'
+
+# 4. Re-run (defaults to the AWS mirror; ~3 min/member once the N320 matrix is cached)
+python fp16FahamuAIFSv2/ecmwf_opendata_pkl_input_aifsens_v2.py --date YYYYMMDD --members 1-50
+```
 
 ---
 

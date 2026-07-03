@@ -3,6 +3,8 @@
 coiled-data.json
 
 # Generated ETL / submission outputs
+input_states_v2/
+input_state_member_*.pkl
 ensemble_icechunk_store/
 ensemble_nc_files/
 ensemble_quintile_probabilities_*.nc

@@ -61,7 +61,10 @@ python fp16FahamuAIFSv2/fp16_automate_aifs_gpu_pipeline_v2.py \
 
 - **Step 1 output:** `gs://aifs-aiquest-us-20251127/<date>_0000/input_v2/input_state_member_NNN.pkl`
   (kept separate from v1's `input/` so both versions coexist). Requires `coiled-data.json`
-  unless `--no-upload`. CPU only. `--source` picks the mirror (`ecmwf`/`azure`/`aws`/`google`).
+  unless `--no-upload`. CPU only. `--source` picks the mirror
+  (**default `aws`**; also `ecmwf`/`azure`/`google`). The direct `ecmwf` portal is throttled
+  to 500 simultaneous connections, so the routine defaults to the **AWS S3** replica — pass
+  `--source ecmwf` only if you specifically need the primary portal.
 - **Step 2 output:** `gs://…/<date>_0000/fp16_v2_forecasts/aifs_ens_forecast_<date>_memberNNN_h*.grib`.
   Needs an Ampere+ GPU and the v2 software env (below).
 - **Steps 3–5:** reuse the `shared/` CLIs with the **`--v2`** flag (added for this model).
@@ -74,12 +77,29 @@ python fp16FahamuAIFSv2/fp16_automate_aifs_gpu_pipeline_v2.py \
 
   ```bash
   micromamba create -y -n aifs-etl -c conda-forge python=3.12.7 \
-      earthkit-data "earthkit-regrid=0.5.1" google-cloud-storage xarray netcdf4 icechunk python-dotenv
+      "earthkit-data<1.0.0" "earthkit-regrid=0.5.1" google-cloud-storage xarray netcdf4 icechunk python-dotenv
   micromamba activate aifs-etl
 
   # REQUIRED for the quintile (3b) + submission (3c/3d) steps — not on conda-forge:
   pip install AI_WQ_package python-dotenv
   ```
+
+  > **Pin `earthkit-data<1.0.0`.** earthkit-data 1.0.0 changed the source API — `from_source(...)`
+  > returns a non-iterable `GribData`, so the input-prep's `for f in data:` loop breaks
+  > (`TypeError: 'GribData' object is not iterable`; `len()` raises `ImportError: cannot import
+  > name 'convert_array'` against earthkit-utils 0.3.0). The unpinned `earthkit-data` in the
+  > create line silently resolves to 1.0.0. Pin `<1.0.0` (solves to 0.20.0) as above.
+  > Fix an already-drifted env with:
+  > `micromamba install -n aifs-etl -c conda-forge 'earthkit-data<1.0.0' 'earthkit-regrid=0.5.1'`.
+
+  > **If a run hangs at `surface fields...` (input prep), don't `^Z` it — that's the cause.**
+  > earthkit-data serialises open-data downloads with a file lock
+  > (`/tmp/earthkit-data-cloudenv/e-odretriever-*.cache.lock`). A **suspended** (`^Z`) or wedged
+  > prep process keeps that lock, so every *new* run blocks forever at the first download with no
+  > output. Recover with: `pgrep -af ecmwf_opendata_pkl_input_aifsens_v2` → `kill -CONT <pid>;
+  > kill -9 <pid>` for any stuck/stopped jobs, then `rm -f /tmp/earthkit-data-cloudenv/*.cache.lock`,
+  > then re-run. To stop a run cleanly use Ctrl-C (SIGINT), not Ctrl-Z. The first `ekr.interpolate`
+  > call also does a one-time N320 matrix download (tens of seconds) — that's normal, not a hang.
 
   > **Why this matters:** the quintile CLI (3b) needs `AI_WQ_package` to fetch the 20-yr
   > quintile **climatology** from the AI-WQ server (`ftp.ecmwf.int`, public — no password).
