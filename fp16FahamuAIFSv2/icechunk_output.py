@@ -61,7 +61,7 @@ def open_repo_gcs(bucket, prefix, service_account_file):
 # ---------------------------------------------------------------------------
 def init_schema(repo, n_members, n_steps, n_values, var_names,
                 latitudes, longitudes, ref_date, timestep_s,
-                float_size="f4", commit_msg=None):
+                float_size="f4", time_chunk=1, commit_msg=None):
     """Create + commit the (member, time, values) schema on branch ``main``.
 
     Must run once, committed BEFORE any :class:`IcechunkMemberWriter` opens a
@@ -69,6 +69,13 @@ def init_schema(repo, n_members, n_steps, n_values, var_names,
     first yielded state so the set always matches the checkpoint exactly).
     ``latitudes``/``longitudes`` are the native N320 cell coordinates (length
     ``n_values``). Returns the commit snapshot id.
+
+    ``time_chunk`` sets how many timesteps live in one chunk along the time axis.
+    **Set it equal to the commit cadence** (``1`` = per model step / 6 h, the
+    default): a step-by-step writer that commits every ``k`` steps into a chunk of
+    ``time_chunk = k`` steps writes each chunk once (~no write amplification). A big
+    ``time_chunk`` (e.g. ``n_steps``) written step-by-step read-modify-writes the
+    whole chunk every step → severe amplification — see ``ICECHUNK_COMMIT_CADENCE.md``.
     """
     s = repo.writable_session("main")
     root = zarr.group(s.store, overwrite=True)
@@ -88,13 +95,17 @@ def init_schema(repo, n_members, n_steps, n_values, var_names,
                       dtype="i4", dimension_names=("member",))[:] = \
         np.arange(1, n_members + 1, dtype="i4")
 
+    tc = max(1, min(int(time_chunk), n_steps))
     for v in var_names:
+        # fill_value=NaN so members/steps not yet written read as missing, not 0
+        # (a 0 fill would masquerade as a real value, e.g. 0 K temperature).
         root.create_array(v, shape=(n_members, n_steps, n_values),
-                          chunks=(1, n_steps, n_values), dtype=float_size,
+                          chunks=(1, tc, n_values), dtype=float_size,
+                          fill_value=float("nan"),
                           dimension_names=("member", "time", "values"))
 
     msg = commit_msg or (f"init schema: {n_members}x{n_steps}x{n_values}, "
-                         f"{len(var_names)} vars ({float_size})")
+                         f"{len(var_names)} vars ({float_size}), time_chunk={tc}")
     return s.commit(msg)
 
 
@@ -111,30 +122,72 @@ def schema_exists(repo, sentinel="time"):
 # Per-member writer (one ACID commit per member)
 # ---------------------------------------------------------------------------
 class IcechunkMemberWriter:
-    """Writes ONE member's rollout into the (member, time, values) arrays, then commits.
+    """Writes ONE member's rollout into the (member, time, values) arrays, committing
+    at a configurable step cadence.
 
-    ``member_index`` is 0-based (ensemble member N -> index N-1). Because each
-    member owns whole ``(1, n_steps, n_values)`` chunks, sequential members never
-    touch the same chunk, so per-member commits are conflict-free.
+    ``member_index`` is 0-based (ensemble member N -> index N-1). With
+    ``commit_every=1`` (the default) it commits **after every model step** — i.e.
+    every 6 h for aifs-ens-2.0, the natural inference cadence — so each step becomes a
+    durable ACID snapshot as the rollout streams. Pair with ``time_chunk=commit_every``
+    in :func:`init_schema` so each committed window is a whole chunk written once
+    (no write amplification; see ``ICECHUNK_COMMIT_CADENCE.md``).
+
+    Because each member owns disjoint chunks (member-chunk size 1), sequential members
+    never share a chunk, so commits stay conflict-free.
     """
 
-    def __init__(self, repo, member_index, branch="main"):
-        self.session = repo.writable_session(branch)
-        self.root = zarr.open_group(self.session.store, mode="r+")
+    def __init__(self, repo, member_index, member_number=None,
+                 commit_every=1, branch="main"):
+        self.repo = repo
+        self.branch = branch
         self.m = int(member_index)
-        self.n = 0                       # step counter within this member
+        self.member_number = int(member_number) if member_number is not None else self.m + 1
+        self.commit_every = max(1, int(commit_every))
+        self.n = 0                       # total steps written this member
+        self._since_commit = 0           # steps written since last commit
         self._var_names = None
+        self.snapshots = []              # snapshot id per committed window
+        self._open()
 
-    def write_step(self, state):
-        """Write one yielded inference state (all fields) at the current time index."""
-        fields = state["fields"]
+    def _open(self):
+        """Start a fresh writable session (called after each commit)."""
+        self.session = self.repo.writable_session(self.branch)
+        self.root = zarr.open_group(self.session.store, mode="r+")
         if self._var_names is None:
             self._var_names = set(self.root.array_keys())
+
+    def write_step(self, state):
+        """Write one yielded inference state (all fields), committing on cadence."""
+        fields = state["fields"]
         for name, value in fields.items():
             if name in self._var_names:
                 self.root[name][self.m, self.n, :] = np.asarray(value).reshape(-1)
         self.n += 1
+        self._since_commit += 1
+        if self._since_commit >= self.commit_every:
+            self._commit_window()
 
-    def commit(self, member_number):
-        """Seal this member as one ACID snapshot; returns the snapshot id."""
-        return self.session.commit(f"member {member_number:03d} ({self.n} steps)")
+    def _commit_window(self):
+        """Commit the steps written since the last commit; reopen a fresh session."""
+        first = self.n - self._since_commit + 1
+        snap = self.session.commit(
+            f"member {self.member_number:03d} steps {first:03d}-{self.n:03d}")
+        self.snapshots.append(snap)
+        self._since_commit = 0
+        self._open()
+        return snap
+
+    def finalize(self):
+        """Flush any steps not yet committed (when n_steps % commit_every != 0).
+
+        Returns the last snapshot id for this member.
+        """
+        if self._since_commit > 0:
+            self._commit_window()
+        return self.snapshots[-1] if self.snapshots else None
+
+    # Backwards-compatible alias: previously commit() sealed the whole member.
+    def commit(self, member_number=None):
+        if member_number is not None:
+            self.member_number = int(member_number)
+        return self.finalize()

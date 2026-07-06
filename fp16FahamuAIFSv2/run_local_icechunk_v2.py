@@ -56,7 +56,8 @@ def parse_member_range(member_str):
 
 def run(date_str, members, input_dir, store_path, lead_time,
         n_members=DEFAULT_N_MEMBERS, precision=INFERENCE_PRECISION,
-        num_chunks=INFERENCE_NUM_CHUNKS, float_size="f4", tag=True):
+        num_chunks=INFERENCE_NUM_CHUNKS, float_size="f4", tag=True,
+        commit_every=1):
 
     # VRAM knobs must be set before the model / CUDA context is created.
     os.environ["ANEMOI_INFERENCE_NUM_CHUNKS"] = str(num_chunks)
@@ -82,6 +83,8 @@ def run(date_str, members, input_dir, store_path, lead_time,
     print(f"Store:       {store_path}")
     print(f"Precision:   FP16 | chunks={num_chunks} | dtype={float_size}")
     print(f"Lead time:   {lead_time}h ({lead_time // 24}d) -> {n_steps} steps @ {TIME_STEP_HOURS}h")
+    print(f"Commit:      every {commit_every} step(s) = {commit_every * TIME_STEP_HOURS}h "
+          f"| time_chunk={commit_every} (aligned, no amplification)")
     print("=" * 70)
 
     repo = open_repo_local(store_path)
@@ -123,26 +126,28 @@ def run(date_str, members, input_dir, store_path, lead_time,
             n_values = len(lats)
             var_names = list(first["fields"].keys())
             print(f"    [SCHEMA] init {n_members}x{n_steps}x{n_values}, "
-                  f"{len(var_names)} vars ({float_size})")
+                  f"{len(var_names)} vars ({float_size}), time_chunk={commit_every}")
             init_schema(repo, n_members=n_members, n_steps=n_steps,
                         n_values=n_values, var_names=var_names,
                         latitudes=lats, longitudes=lons,
                         ref_date=ref_date, timestep_s=TIME_STEP_HOURS * 3600,
-                        float_size=float_size)
+                        float_size=float_size, time_chunk=commit_every)
 
-        writer = IcechunkMemberWriter(repo, member_index=member - 1)
-        writer.write_step(first)                 # keep ALL fields (no wave drop)
+        writer = IcechunkMemberWriter(repo, member_index=member - 1,
+                                      member_number=member, commit_every=commit_every)
+        writer.write_step(first)                 # keep ALL fields (no wave drop); commits on cadence
         for state in gen:
             writer.write_step(state)
             if writer.n % 4 == 0:
-                print(f"    {writer.n * TIME_STEP_HOURS}h / {lead_time}h")
+                print(f"    {writer.n * TIME_STEP_HOURS}h / {lead_time}h "
+                      f"({len(writer.snapshots)} commits)")
 
         if writer.n != n_steps:
             print(f"    [WARN] wrote {writer.n} steps, expected {n_steps}")
-        snap = writer.commit(member)
+        snap = writer.finalize()                 # flush any uncommitted tail steps
         ok.append(member)
-        print(f"    [OK] member {member:03d}: {writer.n} steps committed "
-              f"({snap}) in {time.time() - m_t0:.1f}s")
+        print(f"    [OK] member {member:03d}: {writer.n} steps, "
+              f"{len(writer.snapshots)} commits (last {snap}) in {time.time() - m_t0:.1f}s")
 
     if tag and snap is not None:
         try:
@@ -177,6 +182,10 @@ def main():
                     help="ANEMOI_INFERENCE_NUM_CHUNKS (default 16)")
     ap.add_argument("--float-size", default="f4", choices=["f4", "f2"],
                     help="stored dtype (f4 exact / f2 bulk)")
+    ap.add_argument("--commit-every", type=int, default=1,
+                    help="commit every N model steps (1 = every 6h = per step, "
+                         "default; 2 = 12h, 12 = 72h). time_chunk is aligned to this "
+                         "so writes never amplify.")
     ap.add_argument("--no-tag", action="store_true", help="do not tag the cycle")
     args = ap.parse_args()
 
@@ -185,7 +194,7 @@ def main():
              store_path=args.store, lead_time=args.lead_time,
              n_members=args.n_members, precision=args.precision,
              num_chunks=args.chunks, float_size=args.float_size,
-             tag=not args.no_tag)
+             tag=not args.no_tag, commit_every=args.commit_every)
     return 0 if ok else 1
 
 

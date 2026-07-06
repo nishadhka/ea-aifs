@@ -88,6 +88,25 @@ version of the *current* per-member design.
 
 ---
 
+## 2a. Decision: per-step (6 h) commits — IMPLEMENTED
+
+The **72 h boundary was only a GRIB-file artifact** (chunk the rollout into 72 h files,
+close each to flush memory). Icechunk needs no such thing — every `write_step` already
+streams to the disk-backed session store, so RAM stays flat at any cadence. So the chosen
+cadence is **one commit per model step = 6 h**, the natural inference granularity.
+
+- **6 h is the model's native step** (confirmed from the actual run: GRIB output came out at
+  steps `[6, 12, … 960]`). aifs-ens-2.0 yields one state every 6 h, so **6 h is the finest
+  possible cadence — 3 h is not produced by the model** and cannot be committed.
+- Per-step is also the **cheapest** config (chunk `(1,1,values)`, ~0.92×, no buffering).
+
+Implemented in `icechunk_output.py` + `run_local_icechunk_v2.py`:
+`--commit-every 1` (default) → `time_chunk=1`, commit every 6 h. **Smoke-tested** (member 001,
+72 h): schema `50×12×542080`, 120 vars, **12 commits (one per 6 h step)**, chunks
+`(1,1,542080)`, tag `cycle-…`, xarray readback correct (2t mean 289.7 K), store **2.3 GB vs
+3.1 GB logical (0.74×) — no amplification**. Unwritten members read back as **NaN** (fill),
+not 0. `--commit-every 2` → 12 h, `12` → 72 h (all with aligned `time_chunk`).
+
 ## 3. Recommendation
 
 1. **Do not write the `(1, n_steps, values)` chunk step-by-step.** That is the one
@@ -110,21 +129,22 @@ window over per-6 h if reads dominate.)
 
 ---
 
-## 4. Implementation delta (small)
+## 4. Implementation (done — local writer)
 
-`icechunk_output.py` (the local writer already added this session) and its Path A/GCS twin
-need two parameters:
+Implemented in `icechunk_output.py` + `run_local_icechunk_v2.py`:
 
-- **`init_schema(..., time_chunk=…)`** — replace the hard-coded `(1, n_steps, n_values)` chunk
-  with `(1, time_chunk, n_values)` (`time_chunk = 1` for 6 h, `12` for 72 h, `n_steps` for
-  per-member).
-- **`IcechunkMemberWriter(..., commit_every=…, buffer=True)`** — accumulate `commit_every`
-  steps, write the whole window slab in one assignment (avoids amplification), then
-  `session.commit()` and reopen the session for the next window.
+- **`init_schema(..., time_chunk=1)`** — data-var chunks are `(1, time_chunk, n_values)`
+  (aligned to the commit cadence), with `fill_value=NaN` so unwritten members/steps read as
+  missing rather than 0.
+- **`IcechunkMemberWriter(..., commit_every=1)`** — commits every `commit_every` model steps
+  and reopens a fresh session; `finalize()` flushes any tail. At `commit_every=1` /
+  `time_chunk=1` each 6 h step is one whole chunk written once → no amplification.
+- **`run_local_icechunk_v2.py --commit-every 1`** (default = 6 h; `2` = 12 h, `12` = 72 h).
+  The runner loop is otherwise unchanged; the GRIB path stays the untouched fallback.
 
-`run_local_icechunk_v2.py` gains `--commit-every {1,12,160}` (6 h / 72 h / per-member) and
-passes `time_chunk` through to `init_schema`. The runner loop is otherwise unchanged. This is
-a ~30-line change; the GRIB path stays the untouched fallback.
+The Path A **GCS** twin (`open_repo_gcs`) takes the same `time_chunk`/`commit_every` — only the
+storage backend differs. For `commit_every > 1` *without* re-chunking you'd hit intra-window
+amplification; the aligned `time_chunk` avoids it (or buffer the window per Design S+).
 
 *Evidence: `/tank/projects` probe, 2026-07-06, `icechunk 2.1.0` / `zarr 3.2.1`, RTX 5000 Ada
 box. Numbers reproduce with the 4-config probe in this folder's scratch.*
