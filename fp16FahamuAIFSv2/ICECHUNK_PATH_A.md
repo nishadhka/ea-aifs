@@ -59,6 +59,14 @@ coords:     latitude/longitude chunks=(values,), time chunks=(time,)
 With **member-chunk size 1**, *every member owns whole, disjoint chunks*. No two members
 ever touch the same chunk. This is what makes parallel writes (§3) conflict-free.
 
+> ⚠️ **Time-axis caveat (measured — see [`ICECHUNK_COMMIT_CADENCE.md`](ICECHUNK_COMMIT_CADENCE.md)).**
+> Putting the whole time axis in one chunk (`time` above) is only safe if you **buffer the
+> member and write the chunk in one shot**. Writing it **step-by-step** (as the runner does)
+> read-modify-writes the full chunk every step → **~11× amplification at 24 steps, tens-of-×
+> at the real 160 steps**. If you want to commit every 72 h / 6 h, chunk the time axis to the
+> commit window (`(1, 12, values)` / `(1, 1, values)`); if you keep the big chunk, buffer and
+> write once. Commit *frequency* itself is cheap — the **chunk shape** is what governs write cost.
+
 ### 1.2 dtype & compression
 - `float32` (`f4`) is the default. The model runs FP16, so `float16` (`f2`) halves the
   store with no real precision loss — recommended for the bulk fields.
