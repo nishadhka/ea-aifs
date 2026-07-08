@@ -82,8 +82,8 @@ def valid_dates(forecast_date: str):
     return fc_valid_date1, fc_valid_date2
 
 
-def get_quintile_clim(forecast_date: str, variable: str, password: Optional[str] = None):
-    """Retrieve quintile climatology for a given forecast date and variable."""
+def get_quintile_clim(forecast_date: str, variable: str, password: Optional[str] = None, max_retries: int = 5):
+    """Retrieve quintile climatology with robust retry logic."""
     if not AIWQ_AVAILABLE:
         raise RuntimeError("AI_WQ_package is required for climatology retrieval")
 
@@ -92,19 +92,72 @@ def get_quintile_clim(forecast_date: str, variable: str, password: Optional[str]
 
     fc_valid_date1, fc_valid_date2 = valid_dates(forecast_date)
 
-    clim1 = retrieve_evaluation_data.retrieve_20yr_quintile_clim(
-        fc_valid_date1, variable, password=password
-    )
-    clim2 = retrieve_evaluation_data.retrieve_20yr_quintile_clim(
-        fc_valid_date2, variable, password=password
-    )
+    import time
+
+    def retry_download(date_str, var, attempt=0):
+        try:
+            # Add initial delay to avoid FTP server rate limiting
+            if attempt == 0:
+                time.sleep(2)
+
+            return retrieve_evaluation_data.retrieve_20yr_quintile_clim(
+                date_str, var, password=password
+            )
+        except Exception as e:
+            if attempt < max_retries - 1:
+                # Exponential backoff: 3s, 6s, 12s, 24s, 48s
+                wait_time = (2 ** attempt) * 3
+                error_msg = str(e).split('\n')[0]
+                print(f"      ⚠️  Download attempt {attempt + 1}/{max_retries} failed: {error_msg}")
+                print(f"      Waiting {wait_time}s before retry...")
+                time.sleep(wait_time)
+                return retry_download(date_str, var, attempt + 1)
+            else:
+                print(f"      ❌ All {max_retries} attempts failed")
+                raise
+
+    clim1 = retry_download(fc_valid_date1, variable)
+    clim2 = retry_download(fc_valid_date2, variable)
 
     return clim1, clim2
 
 
+def check_local_climatology_files(forecast_date: str, clim_dir: str = "./",
+                                 variables: Optional[List[str]] = None) -> dict:
+    """Check which climatology files exist locally."""
+    if variables is None:
+        variables = ['tas', 'mslp', 'pr']
+
+    fc_valid_date1, fc_valid_date2 = valid_dates(forecast_date)
+
+    local_files = {
+        'tas': {
+            'week1': os.path.join(clim_dir, f"tas_20yrCLIM_WEEKLYMEAN_quintiles_{fc_valid_date1}.nc"),
+            'week2': os.path.join(clim_dir, f"tas_20yrCLIM_WEEKLYMEAN_quintiles_{fc_valid_date2}.nc")
+        },
+        'mslp': {
+            'week1': os.path.join(clim_dir, f"mslp_20yrCLIM_WEEKLYMEAN_quintiles_{fc_valid_date1}.nc"),
+            'week2': os.path.join(clim_dir, f"mslp_20yrCLIM_WEEKLYMEAN_quintiles_{fc_valid_date2}.nc")
+        },
+        'pr': {
+            'week1': os.path.join(clim_dir, f"pr_20yrCLIM_WEEKLYSUM_quintiles_{fc_valid_date1}.nc"),
+            'week2': os.path.join(clim_dir, f"pr_20yrCLIM_WEEKLYSUM_quintiles_{fc_valid_date2}.nc")
+        }
+    }
+
+    available = {}
+    for var in variables:
+        available[var] = {
+            'week1': os.path.exists(local_files[var]['week1']),
+            'week2': os.path.exists(local_files[var]['week2'])
+        }
+
+    return available, local_files
+
+
 def download_all_quintiles(forecast_date: str, variables: Optional[List[str]] = None,
-                          password: Optional[str] = None):
-    """Download quintile climatologies for multiple variables."""
+                          password: Optional[str] = None, clim_dir: str = "./"):
+    """Download quintile climatologies for multiple variables (skip if local files exist)."""
     if variables is None:
         variables = ['tas', 'mslp', 'pr']
 
@@ -112,6 +165,14 @@ def download_all_quintiles(forecast_date: str, variables: Optional[List[str]] = 
         password = os.getenv('AIWQ_PASSWORD') or os.getenv('AIWQ_SUBMIT_PWD')
 
     fc_valid_date1, fc_valid_date2 = valid_dates(forecast_date)
+
+    available, local_files = check_local_climatology_files(forecast_date, clim_dir, variables)
+
+    # Check if all files are available locally
+    all_available = all(available[v]['week1'] and available[v]['week2'] for v in variables)
+    if all_available:
+        print(f"   ✅ All climatology files found locally - skipping download")
+        return {}
 
     quintile_data = {}
 
@@ -445,6 +506,32 @@ def download_ensemble_nc_from_gcs(
         return None
 
 
+def load_existing_icechunk_store(icechunk_store_path: str = "./ensemble_icechunk_store"):
+    """Load existing icechunk store without downloading."""
+    if not ICECHUNK_AVAILABLE:
+        raise RuntimeError("icechunk is required. Install with: pip install icechunk")
+
+    if not os.path.exists(icechunk_store_path):
+        raise FileNotFoundError(f"Icechunk store not found at {icechunk_store_path}")
+
+    print(f"📂 Loading existing icechunk store from {icechunk_store_path}...")
+    local_storage = icechunk.local_filesystem_storage(icechunk_store_path)
+    repo = icechunk.Repository.open(local_storage)
+    read_session = repo.readonly_session(branch="main")
+
+    zarr_group = "ensemble_forecast"
+    ensemble_ds = xr.open_zarr(read_session.store, group=zarr_group,
+                             chunks={'member': 1, 'step': 10, 'latitude': 60, 'longitude': 120})
+
+    print(f"✅ Loaded existing ensemble dataset:")
+    print(f"   Members: {ensemble_ds.sizes['member']}")
+    print(f"   Variables: {list(ensemble_ds.data_vars)}")
+    print(f"   Dimensions: {dict(ensemble_ds.sizes)}")
+    print(f"   Storage: icechunk (lazy-loaded, memory-efficient)")
+
+    return ensemble_ds
+
+
 def load_ensemble_from_gcs(
     forecast_date: str,
     members: Optional[List[int]] = None,
@@ -743,8 +830,8 @@ Examples:
     # Disable icechunk (not recommended for large ensembles - may cause OOM killed)
     python ensemble_quintile_analysis_cli.py --date 20251127 --no-icechunk
 
-    # Skip redownloading existing files
-    python ensemble_quintile_analysis_cli.py --date 20251127 --skip-existing
+    # Skip ensemble download and use existing icechunk store (fast retry for climatology/quintiles)
+    python ensemble_quintile_analysis_cli.py --date 20251127 --skip-ensemble
         """
     )
 
@@ -761,6 +848,8 @@ Examples:
                        help='Disable icechunk memory-efficient loading (not recommended for large ensembles)')
     parser.add_argument('--skip-existing', action='store_true', default=True,
                        help='Skip downloading existing files (default: True)')
+    parser.add_argument('--skip-ensemble', action='store_true',
+                       help='Skip Step 1 (ensemble download) and load existing icechunk store. Useful for retrying climatology/quintile calculation.')
     parser.add_argument('--output-dir', default='./',
                        help='Output directory for quintile file')
     parser.add_argument('--clim-dir', default='./',
@@ -801,26 +890,37 @@ Examples:
     print(f"Members: {args.members if args.members else 'all available'}")
     print(f"GCS bucket: {args.bucket}")
     print(f"Memory-efficient mode (icechunk): {'ENABLED' if use_icechunk else 'DISABLED'}")
+    if args.skip_ensemble:
+        print("⏭️  Skipping Step 1 (ensemble download) - will load existing icechunk store")
     print()
 
-    # Step 1: Download ensemble NetCDF files
-    if use_icechunk:
-        print("📥 Step 1: Loading ensemble forecast from GCS (memory-efficient icechunk mode)...")
-        print("   This processes members one at a time to avoid OOM errors")
+    # Step 1: Download ensemble NetCDF files or load existing store
+    if args.skip_ensemble:
+        print("📂 Step 1: Loading existing ensemble forecast from icechunk store...")
+        icechunk_store_path = "./ensemble_icechunk_store"
+        try:
+            fds = load_existing_icechunk_store(icechunk_store_path)
+        except (FileNotFoundError, RuntimeError) as e:
+            print(f"❌ Error loading existing icechunk store: {e}")
+            return 1
     else:
-        print("📥 Step 1: Loading ensemble forecast from GCS...")
-        print("   ⚠️  Warning: Loading all members into RAM - may cause OOM killed!")
+        if use_icechunk:
+            print("📥 Step 1: Loading ensemble forecast from GCS (memory-efficient icechunk mode)...")
+            print("   This processes members one at a time to avoid OOM errors")
+        else:
+            print("📥 Step 1: Loading ensemble forecast from GCS...")
+            print("   ⚠️  Warning: Loading all members into RAM - may cause OOM killed!")
 
-    fds = load_ensemble_from_gcs(
-        forecast_date,
-        members=members,
-        gcs_bucket=args.bucket,
-        service_account_path=args.service_account,
-        use_icechunk=use_icechunk,
-        skip_download_if_exists=args.skip_existing,
-        fp16=args.fp16,
-        v2=args.v2
-    )
+        fds = load_ensemble_from_gcs(
+            forecast_date,
+            members=members,
+            gcs_bucket=args.bucket,
+            service_account_path=args.service_account,
+            use_icechunk=use_icechunk,
+            skip_download_if_exists=args.skip_existing,
+            fp16=args.fp16,
+            v2=args.v2
+        )
 
     if fds is None:
         print("❌ Failed to load ensemble data")
@@ -836,7 +936,7 @@ Examples:
     print(f"   Valid dates: {fc_valid_date1}, {fc_valid_date2}")
 
     if AIWQ_AVAILABLE:
-        download_all_quintiles(forecast_date)
+        download_all_quintiles(forecast_date, clim_dir=args.clim_dir)
     else:
         print("   Warning: AI_WQ_package not available, using local climatology files")
     print()
