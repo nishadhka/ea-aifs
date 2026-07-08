@@ -124,6 +124,58 @@ python fp16FahamuAIFSv2/fp16_automate_aifs_gpu_pipeline_v2.py \
   python ../shared/aiwq_individual_files_cli.py --date 20260625 --v2
   ```
 
+### Fast re-runs & out-of-window submissions (3b–3d optimized)
+
+For faster re-runs of Steps 3b–3d (climatology → quintiles → individual files → zip), or
+when rerunning after a network error:
+
+```bash
+# --- First run: full quintile pipeline ---
+python ../shared/ensemble_quintile_analysis_cli.py --date 20260625 --v2
+
+# --- If climatology FTP download fails, use direct FTP downloader ---
+python download_climatology.py --date 20260625 --output-dir ./
+
+# --- Fast re-run: load existing ensemble from icechunk store (avoids 50-member re-download) ---
+python ../shared/ensemble_quintile_analysis_cli.py --date 20260625 --v2 --skip-ensemble
+
+# --- Individual files + zip (as before) ---
+AIWQ_TEAM_NAME=Fahamu AIWQ_MODEL_NAME_FP16=fp16FahamuAIFSv2 AIWQ_PASSWORD=<pwd> \
+  python ../shared/aiwq_individual_files_cli.py --date 20260625 --v2
+
+# --- Cleanup intermediates (ensemble_nc_files, aiwq_individual_<date>, optionally icechunk_store) ---
+python cleanup_aiwq_intermediates.py --date 20260625                  # remove individual files only
+python cleanup_aiwq_intermediates.py --all                           # full cleanup (keep .zip + quintile file)
+python cleanup_aiwq_intermediates.py --all --dry-run                 # preview what will be deleted
+```
+
+**Output location:** `aiwq_submission_<date>_<team>_<model>.zip` is saved in the current working directory
+(typically `fp16FahamuAIFSv2/`) alongside the quintile file.
+
+**Performance notes:**
+
+| Step | First run | With `--skip-ensemble` |
+|------|-----------|----------------------|
+| 3b: Quintiles | ~2–3 min (50-member ensemble download + calculation) | ~1 min (load from cache + calculation) |
+| FTP climatology | ~1–2 min (or retried with backoff) | Skipped if files exist locally |
+| 3d: Individual files + zip | ~30 sec | ~30 sec |
+| **Total** | **~3–5 min** | **~1–2 min** |
+
+**Intermediate file sizes (can be cleaned up after zipping):**
+
+- `ensemble_nc_files/`: ~6.5 GB (50 members × ~130 MB each) — deleted by `cleanup_aiwq_intermediates.py`
+- `aiwq_individual_<date>/`: ~30 MB (6 .nc files) — deleted by `cleanup_aiwq_intermediates.py`
+- `ensemble_icechunk_store/`: ~10 GB (lazy-loaded zarr format) — kept for re-runs, delete with `--all`
+- `aiwq_submission_*.zip`: ~700 KB — **keep this for submission**
+
+**Climatology troubleshooting:**
+
+If `ensemble_quintile_analysis_cli.py` fails during climatology download with `530 Login authentication failed`:
+1. The direct FTP downloader (`download_climatology.py`) often succeeds where the AI_WQ_package fails
+   (different FTP session handling).
+2. Use `download_climatology.py` as a workaround, then retry the quintile CLI with `--skip-ensemble`.
+3. Files are cached locally and reused across runs, so the FTP step only runs once per date pair.
+
   > **Submission window:** the live endpoint (3c) only accepts a forecast start date within
   > its window (`start_date` → `start_date + 3 days`). Outside it you get
   > *"You are not allowed to submit a forecast for … at this point in time"* — this is a
