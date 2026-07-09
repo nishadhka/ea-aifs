@@ -68,10 +68,43 @@ ever touch the same chunk. This is what makes parallel writes (§3) conflict-fre
 > write once. Commit *frequency* itself is cheap — the **chunk shape** is what governs write cost.
 
 ### 1.2 dtype & compression
-- `float32` (`f4`) is the default. The model runs FP16, so `float16` (`f2`) halves the
-  store with no real precision loss — recommended for the bulk fields.
+- `float32` (`f4`) is the default and the **only safe blanket choice**.
+- > ⚠️ **`float16` (`f2`) is NOT safe as a blanket dtype — measured.** The earlier advice
+  > here ("`f2` halves the store with no real precision loss") was wrong. `float16` maxes
+  > out at **65,504**, and **12 of the 120 model output fields exceed it**, so they would
+  > silently become `±inf`:
+  >
+  > | field | max\|value\| |
+  > |---|---|
+  > | `ssrd` | 19,958,648 |
+  > | `strd` | 10,039,377 |
+  > | `z_10` … `z_400` | 315,762 … 75,402 |
+  > | **`msl`** | **104,063** |
+  > | `sp` | 103,924 |
+  >
+  > `msl` is one of the three fields the downstream regrid extracts (`tp`/`msl`/`2t`), so
+  > this would corrupt the AI-WQ chain. Even *in-range* fields lose accuracy: `2t ≈ 318 K`
+  > quantises to ~0.25 K steps in `f16` (the model runs FP16 on *normalised* values, not
+  > raw Kelvin — that is why inference is fine but storage is not).
+  >
+  > If you need to halve the store, use **per-variable** dtypes (`f4` for the 12 above,
+  > `f2` elsewhere) or CF-style `int16` + `scale_factor`/`add_offset` packing — not a
+  > blanket `f2`. Better: cut *steps*, not precision (see §1.4).
 - Add a Zarr v3 compressor (e.g. `zstd` level 3) in `create_array(..., compressors=…)`.
-  GRIB chunks are ~1.6 GB each; compressed `f4`/`f2` Zarr is typically smaller.
+  GRIB chunks are ~1.6 GB each; compressed `f4` Zarr is comparable.
+
+### 1.4 Store only the steps the downstream actually reads
+`shared/aifs_n320_grib_1p5defg_nc_cli.py` reads exactly the **432–792 h** windows
+(days 18–33; its `time_ranges` are `432-504, 504-576, 576-648, 648-720, 720-792`).
+The rollout is autoregressive so every step must be **computed**, but steps outside that
+window need not be **stored** — with `(1, 1, values)` chunks a skipped step allocates no
+chunks and reads back as `NaN`.
+
+Measured (member 001, `f4`, per-step commits): storing all 160 steps of a 960 h run =
+**30 GB/member**; storing only 432–792 h of a 792 h run = **61/132 steps = 12 GB/member**.
+Across 50 members that is **~600 GB instead of ~1.5 TB**. Use
+`run_local_icechunk_v2.py --lead-time 792 --write-hours 432-792`. (Cloud Run's `app.py`
+already uses `LEAD_TIME = 792`; the v2 default of 960 h overshoots downstream by 168 h.)
 
 ### 1.3 Keep the wave-direction fields (a data **gain** over GRIB)
 The GRIB path was **forced to drop** `cos_mwd`/`sin_mwd` (`drop_unencodable_wave_dir`,

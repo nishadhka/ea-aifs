@@ -118,19 +118,21 @@ def schema_exists(repo, sentinel="time"):
         return False
 
 
-def member_written(repo, member_index, n_steps, branch="main", sentinel="2t"):
-    """True if ``member_index``'s final step is already present (finite) in the store.
+def member_written(repo, member_index, probe_index, branch="main", sentinel="2t"):
+    """True if ``member_index`` already has data at absolute time ``probe_index``.
 
-    Used for idempotent resume of a multi-member run: a member whose last step is
-    non-NaN was fully written, so it can be skipped. ``sentinel`` should be a variable
-    that is *not* NaN-masked (``2t`` is a safe default; falls back to the first data var).
+    Used for idempotent resume of a multi-member run: pass the **last index the run
+    would write** (with a write-window this is not ``n_steps - 1``), so a member that
+    finished reads back finite there and can be skipped. ``sentinel`` should be a
+    variable that is *not* NaN-masked (``2t`` is a safe default; falls back to the
+    first data var).
     """
     try:
         root = zarr.open_group(repo.readonly_session(branch).store, mode="r")
         keys = list(root.array_keys())
         var = sentinel if sentinel in keys else next(
             k for k in keys if k not in ("latitude", "longitude", "time", "member"))
-        return bool(np.isfinite(root[var][int(member_index), int(n_steps) - 1, 0]))
+        return bool(np.isfinite(root[var][int(member_index), int(probe_index), 0]))
     except Exception:
         return False
 
@@ -160,10 +162,12 @@ class IcechunkMemberWriter:
         self.m = int(member_index)
         self.member_number = int(member_number) if member_number is not None else self.m + 1
         self.commit_every = max(1, int(commit_every))
-        self.n = 0                       # total steps written this member
+        self.n = 0                       # total steps WRITTEN this member
         self._since_commit = 0           # steps written since last commit
+        self._pending = []               # absolute time indices in the open session
         self._var_names = None
         self.snapshots = []              # snapshot id per committed window
+        self.last_index = None           # last absolute time index written
         self._open()
 
     def _open(self):
@@ -173,24 +177,37 @@ class IcechunkMemberWriter:
         if self._var_names is None:
             self._var_names = set(self.root.array_keys())
 
-    def write_step(self, state):
-        """Write one yielded inference state (all fields), committing on cadence."""
+    def write_step(self, state, time_index=None):
+        """Write one yielded inference state (all fields), committing on cadence.
+
+        ``time_index`` is the **absolute** 0-based index on the time axis. Pass it
+        explicitly when some steps are skipped (e.g. only the downstream window is
+        stored) — otherwise the written count would silently shift every later step
+        into the wrong slot. Defaults to the written count (contiguous writes).
+        Skipped steps allocate no chunks and read back as NaN.
+        """
+        idx = self.n if time_index is None else int(time_index)
         fields = state["fields"]
         for name, value in fields.items():
             if name in self._var_names:
-                self.root[name][self.m, self.n, :] = np.asarray(value).reshape(-1)
+                self.root[name][self.m, idx, :] = np.asarray(value).reshape(-1)
         self.n += 1
         self._since_commit += 1
+        self._pending.append(idx)
+        self.last_index = idx
         if self._since_commit >= self.commit_every:
             self._commit_window()
 
     def _commit_window(self):
         """Commit the steps written since the last commit; reopen a fresh session."""
-        first = self.n - self._since_commit + 1
+        if not self._pending:                      # nothing staged -> no empty commit
+            return None
+        first, last = self._pending[0], self._pending[-1]
         snap = self.session.commit(
-            f"member {self.member_number:03d} steps {first:03d}-{self.n:03d}")
+            f"member {self.member_number:03d} steps {first:03d}-{last:03d}")
         self.snapshots.append(snap)
         self._since_commit = 0
+        self._pending = []
         self._open()
         return snap
 

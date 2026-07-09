@@ -40,6 +40,7 @@ import os
 import sys
 import time
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 
 # This script lives in the model subfolder; import the sibling modules directly.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -53,6 +54,11 @@ INFERENCE_PRECISION = "16"       # FP16
 INFERENCE_NUM_CHUNKS = 16        # higher -> less VRAM, slower
 DEFAULT_N_MEMBERS = 50           # size of the member axis in the store
 
+# Downstream (shared/aifs_n320_grib_1p5defg_nc_cli.py) reads only the 432-792 h
+# windows (days 18-33). Steps outside this are computed by the rollout but need
+# not be stored; skipped steps allocate no chunks and read back as NaN.
+DOWNSTREAM_WINDOW = "432-792"
+
 
 def parse_member_range(member_str):
     """'1-50' or '1,2,3' or '7' -> list[int]."""
@@ -65,10 +71,56 @@ def parse_member_range(member_str):
     return [int(member_str)]
 
 
+def parse_write_hours(spec):
+    """'432-792' -> (432, 792); None/'all' -> (None, None) meaning write every step."""
+    if not spec or str(spec).lower() == "all":
+        return (None, None)
+    a, b = str(spec).split("-")
+    lo, hi = int(a), int(b)
+    if lo > hi:
+        raise ValueError(f"--write-hours {spec}: start > end")
+    return (lo, hi)
+
+
+def pkl_path_for(member, input_dir):
+    return os.path.join(input_dir, f"input_state_member_{member:03d}.pkl")
+
+
+def fetch_pkl(member, input_dir, bucket, gcs_prefix, service_account_key):
+    """Download one member's input pkl from GCS if not already present locally.
+
+    Downloads to ``*.part`` and only renames after the byte count matches the blob,
+    so an interrupted transfer can never leave a truncated pkl in place.
+    """
+    from google.cloud import storage
+
+    path = pkl_path_for(member, input_dir)
+    blob_name = f"{gcs_prefix}/input_state_member_{member:03d}.pkl"
+    os.makedirs(input_dir, exist_ok=True)
+
+    client = storage.Client.from_service_account_json(service_account_key)
+    blob = client.bucket(bucket).blob(blob_name)
+    blob.reload()
+
+    if os.path.exists(path) and os.path.getsize(path) == blob.size:
+        return path                                   # already complete
+
+    tmp = path + ".part"
+    blob.download_to_filename(tmp)
+    got = os.path.getsize(tmp)
+    if got != blob.size:
+        os.remove(tmp)
+        raise IOError(f"member {member:03d}: got {got} bytes, expected {blob.size}")
+    os.replace(tmp, path)
+    return path
+
+
 def run(date_str, members, input_dir, store_path, lead_time,
         n_members=DEFAULT_N_MEMBERS, precision=INFERENCE_PRECISION,
         num_chunks=INFERENCE_NUM_CHUNKS, float_size="f4", tag=True,
-        commit_every=1, skip_existing=False):
+        commit_every=1, skip_existing=False, write_hours=None,
+        gcs_fetch=False, bucket=None, gcs_prefix=None, service_account_key=None,
+        cleanup_pkl=False):
 
     # VRAM knobs must be set before the model / CUDA context is created.
     os.environ["ANEMOI_INFERENCE_NUM_CHUNKS"] = str(num_chunks)
@@ -84,6 +136,17 @@ def run(date_str, members, input_dir, store_path, lead_time,
         raise ValueError(f"members {bad} outside 1..{n_members} (raise --n-members)")
 
     n_steps = lead_time // TIME_STEP_HOURS
+    h_lo, h_hi = parse_write_hours(write_hours)
+
+    def keep(hour):
+        """Store this step? (rollout still computes every step regardless)"""
+        return (h_lo is None or hour >= h_lo) and (h_hi is None or hour <= h_hi)
+
+    kept = [s for s in range(1, n_steps + 1) if keep(s * TIME_STEP_HOURS)]
+    if not kept:
+        raise ValueError(f"--write-hours {write_hours} selects no step within "
+                         f"lead-time {lead_time}h")
+    last_kept_index = kept[-1] - 1        # absolute 0-based index of final stored step
 
     print("=" * 70)
     print("AIFS-ENS-2.0 FP16  ->  LOCAL Icechunk store (no GCS, no GRIB)")
@@ -96,8 +159,16 @@ def run(date_str, members, input_dir, store_path, lead_time,
     print(f"Lead time:   {lead_time}h ({lead_time // 24}d) -> {n_steps} steps @ {TIME_STEP_HOURS}h")
     print(f"Commit:      every {commit_every} step(s) = {commit_every * TIME_STEP_HOURS}h "
           f"| time_chunk={commit_every} (aligned, no amplification)")
+    if h_lo is None:
+        print(f"Write window: ALL {n_steps} steps stored")
+    else:
+        print(f"Write window: {h_lo}-{h_hi}h -> storing {len(kept)}/{n_steps} steps "
+              f"({100*len(kept)/n_steps:.0f}%); others computed but not stored (NaN)")
     print(f"Member axis: 1..{n_members} in ONE store"
           + (" | skip already-written members (resume)" if skip_existing else ""))
+    if gcs_fetch:
+        print(f"Input:       fetch from gs://{bucket}/{gcs_prefix}/ (prefetch next member)"
+              + (" | delete pkl after each member" if cleanup_pkl else ""))
     print("=" * 70)
 
     repo = open_repo_local(store_path)
@@ -109,16 +180,43 @@ def run(date_str, members, input_dir, store_path, lead_time,
     print(f"Model loaded in {time.time() - t0:.1f}s\n")
 
     ok, failed, skipped, snap = [], [], [], None
-    for member in members:
-        m_t0 = time.time()
-        print(f"\n--- Member {member:03d} ---")
 
-        # Idempotent resume: a member whose final step is already present is done.
-        # Checked before the pkl load / inference so a resumed run does no wasted work.
-        if skip_existing and schema_exists(repo) and member_written(repo, member - 1, n_steps):
-            print(f"    [SKIP] member {member:03d} already complete in store")
+    # Resolve the work list up front (before any download) so resumed/complete members
+    # never cost a GCS transfer.
+    todo = []
+    for member in members:
+        if skip_existing and schema_exists(repo) and member_written(repo, member - 1,
+                                                                    last_kept_index):
+            print(f"--- Member {member:03d}: [SKIP] already complete in store")
             skipped.append(member)
-            continue
+        else:
+            todo.append(member)
+    print(f"\nTo process: {len(todo)} member(s); skipped {len(skipped)}\n")
+
+    # Prefetch the next member's pkl (~1 GB) on a worker thread while the GPU runs the
+    # current one, so the download is hidden behind inference.
+    pool = ThreadPoolExecutor(max_workers=1) if gcs_fetch else None
+    futures = {}
+    if pool and todo:
+        futures[todo[0]] = pool.submit(fetch_pkl, todo[0], input_dir, bucket,
+                                       gcs_prefix, service_account_key)
+
+    for i, member in enumerate(todo):
+        m_t0 = time.time()
+        print(f"\n--- Member {member:03d} ({i + 1}/{len(todo)}) ---")
+
+        if pool:
+            try:
+                futures[member].result()             # ensure this member's pkl landed
+                print(f"    [FETCH] pkl ready")
+            except Exception as e:
+                print(f"    [FAILED] download: {e}")
+                failed.append(member)
+                continue
+            if i + 1 < len(todo):                    # kick off the next download now
+                nxt = todo[i + 1]
+                futures[nxt] = pool.submit(fetch_pkl, nxt, input_dir, bucket,
+                                           gcs_prefix, service_account_key)
 
         try:
             input_state = runmod.load_input_state_from_pickle(member, input_dir)
@@ -156,19 +254,38 @@ def run(date_str, members, input_dir, store_path, lead_time,
 
         writer = IcechunkMemberWriter(repo, member_index=member - 1,
                                       member_number=member, commit_every=commit_every)
-        writer.write_step(first)                 # keep ALL fields (no wave drop); commits on cadence
-        for state in gen:
-            writer.write_step(state)
-            if writer.n % 4 == 0:
-                print(f"    {writer.n * TIME_STEP_HOURS}h / {lead_time}h "
-                      f"({len(writer.snapshots)} commits)")
 
-        if writer.n != n_steps:
-            print(f"    [WARN] wrote {writer.n} steps, expected {n_steps}")
+        # The rollout is autoregressive: every step must be COMPUTED. Steps outside the
+        # write window are simply not stored (no chunks allocated -> read back as NaN).
+        # Index by the ABSOLUTE step so skipped steps don't shift later ones.
+        def consume(state, step):
+            hour = step * TIME_STEP_HOURS
+            if keep(hour):
+                writer.write_step(state, time_index=step - 1)   # keep ALL fields
+            if step % 20 == 0:
+                print(f"    {hour}h / {lead_time}h "
+                      f"(stored {writer.n}/{len(kept)}, {len(writer.snapshots)} commits)")
+
+        consume(first, 1)
+        for step, state in enumerate(gen, start=2):
+            consume(state, step)
+
+        if writer.n != len(kept):
+            print(f"    [WARN] stored {writer.n} steps, expected {len(kept)}")
         snap = writer.finalize()                 # flush any uncommitted tail steps
         ok.append(member)
-        print(f"    [OK] member {member:03d}: {writer.n} steps, "
+        print(f"    [OK] member {member:03d}: stored {writer.n}/{n_steps} steps, "
               f"{len(writer.snapshots)} commits (last {snap}) in {time.time() - m_t0:.1f}s")
+
+        # Free the ~1 GB pkl immediately; staging all 50 would cost ~48 GB.
+        if cleanup_pkl:
+            p = pkl_path_for(member, input_dir)
+            if os.path.exists(p):
+                os.remove(p)
+                print(f"    [CLEANUP] removed {os.path.basename(p)}")
+
+    if pool:
+        pool.shutdown(wait=False, cancel_futures=True)
 
     if tag and snap is not None:
         try:
@@ -211,10 +328,30 @@ def main():
                          "default; 2 = 12h, 12 = 72h). time_chunk is aligned to this "
                          "so writes never amplify.")
     ap.add_argument("--skip-existing", action="store_true",
-                    help="skip members whose final step is already in the store "
+                    help="skip members whose final stored step is already present "
                          "(idempotent resume of an interrupted multi-member run)")
+    ap.add_argument("--write-hours", default="all",
+                    help=f"only STORE steps whose lead hour is in this window, e.g. "
+                         f"'{DOWNSTREAM_WINDOW}' (what the downstream regrid reads). "
+                         f"'all' (default) stores every step. The rollout always "
+                         f"computes every step; skipped steps use no disk (NaN).")
     ap.add_argument("--no-tag", action="store_true", help="do not tag the cycle")
+    ap.add_argument("--gcs-fetch", action="store_true",
+                    help="download each member's input pkl from GCS on demand "
+                         "(next member prefetched during inference)")
+    ap.add_argument("--bucket", default="aifs-aiquest-us-20251127")
+    ap.add_argument("--service-account", default="coiled-data.json")
+    ap.add_argument("--gcs-input-prefix", default=None,
+                    help="default '<date>/input_v2'")
+    ap.add_argument("--cleanup-pkl", action="store_true",
+                    help="delete each member's pkl after it is written (saves ~48 GB "
+                         "over a 50-member run)")
     args = ap.parse_args()
+
+    gcs_prefix = args.gcs_input_prefix or f"{args.date}/input_v2"
+    if args.gcs_fetch and not os.path.exists(args.service_account):
+        print(f"ERROR: service account not found: {args.service_account}")
+        return 1
 
     members = parse_member_range(args.members)
     ok = run(date_str=args.date, members=members, input_dir=args.input_dir,
@@ -222,7 +359,11 @@ def main():
              n_members=args.n_members, precision=args.precision,
              num_chunks=args.chunks, float_size=args.float_size,
              tag=not args.no_tag, commit_every=args.commit_every,
-             skip_existing=args.skip_existing)
+             skip_existing=args.skip_existing, write_hours=args.write_hours,
+             gcs_fetch=args.gcs_fetch, bucket=args.bucket, gcs_prefix=gcs_prefix,
+             service_account_key=os.path.abspath(args.service_account)
+             if args.gcs_fetch else None,
+             cleanup_pkl=args.cleanup_pkl)
     return 0 if ok else 1
 
 
