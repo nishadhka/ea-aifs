@@ -1,2 +1,9 @@
 # GCP service-account key — must never be committed
 coiled-data.json
+
+# Python bytecode caches
+__pycache__/
+*.py[cod]
+
+# Notebook checkpoints
+.ipynb_checkpoints/

@@ -15,12 +15,15 @@ micromamba activate aifs-etl
 
 ```bash
 # Create input-state pickle files for 50 members
-# Date: 20260709 | Source: AWS S3 mirror | Upload to GCS: Yes
+# Date: 20260709 | Source: AWS S3 mirror (hardcoded) | Upload to GCS: Yes
 micromamba run -n aifs-etl python ecmwf_opendata_pkl_input_aifsens_v2.py \
   --date 20260709 \
-  --members 1-50 \
-  --source aws
+  --members 1-50
 ```
+
+> **No `--source` flag.** The open-data mirror is hardcoded to the **AWS S3** replica
+> (the direct `ecmwf` portal is throttled to 500 simultaneous connections). Passing
+> `--source` fails with `error: unrecognized arguments: --source`.
 
 ## Command Breakdown
 
@@ -28,7 +31,7 @@ micromamba run -n aifs-etl python ecmwf_opendata_pkl_input_aifsens_v2.py \
 |-----------|-------|-------------|
 | `--date` | `20260709` | Forecast initialization date (YYYYMMDD) |
 | `--members` | `1-50` | All 50 ensemble members |
-| `--source` | `aws` | Use AWS S3 mirror (faster than direct ECMWF, recommended) |
+| (fixed) | mirror | AWS S3 — hardcoded, not selectable |
 | (default) | `--gcs-subpath` | `input_v2` - GCS storage path |
 | (default) | `--out-dir` | `input_states_v2/` - local output directory |
 
@@ -37,19 +40,15 @@ micromamba run -n aifs-etl python ecmwf_opendata_pkl_input_aifsens_v2.py \
 ```bash
 # Subset members only (e.g., members 1-10 for testing)
 micromamba run -n aifs-etl python ecmwf_opendata_pkl_input_aifsens_v2.py \
-  --date 20260709 --members 1-10 --source aws
+  --date 20260709 --members 1-10
 
 # Specific members (e.g., 1, 5, 10, 25)
 micromamba run -n aifs-etl python ecmwf_opendata_pkl_input_aifsens_v2.py \
-  --date 20260709 --members 1,5,10,25 --source aws
+  --date 20260709 --members 1,5,10,25
 
-# Skip GCS upload (local testing only)
+# Skip GCS upload (local testing only), keep the pkls on disk
 micromamba run -n aifs-etl python ecmwf_opendata_pkl_input_aifsens_v2.py \
-  --date 20260709 --members 1-50 --source aws --no-upload
-
-# Use ECMWF direct portal (slower, may hit rate limits)
-micromamba run -n aifs-etl python ecmwf_opendata_pkl_input_aifsens_v2.py \
-  --date 20260709 --members 1-50 --source ecmwf
+  --date 20260709 --members 1-50 --no-upload --keep-local
 ```
 
 ## Expected Output
@@ -68,13 +67,13 @@ The script will:
 
 ```
 input_states_v2/
-├── input_state_member_001.pkl  (~100 MB)
-├── input_state_member_002.pkl  (~100 MB)
+├── input_state_member_001.pkl  (~0.97 GB)
+├── input_state_member_002.pkl  (~0.97 GB)
 │   ...
-└── input_state_member_050.pkl  (~100 MB)
+└── input_state_member_050.pkl  (~0.97 GB)
 ```
 
-**Total local size:** ~5 GB  
+**Total local size:** ~48 GB (measured: 112 fields × 2 timesteps × 542,080 N320 cells, float64)  
 **GCS location:** `gs://aifs-aiquest-us-20251127/20260709_0000/input_v2/`
 
 ## Next Steps (Step 2: GPU Inference)
@@ -93,7 +92,8 @@ This reads the input_v2/ pkl files and produces GRIB forecasts.
 | Issue | Solution |
 |-------|----------|
 | "earthkit-data serialises open-data downloads with a file lock" (hangs) | Use Ctrl-C (not Ctrl-Z) to stop; remove lock: `rm -f /tmp/earthkit-data-cloudenv/*.cache.lock` |
-| Network timeout / slow downloads | Retry with `--source aws` (default) instead of ecmwf |
+| `error: unrecognized arguments: --source` | The `--source` flag was removed; the AWS S3 mirror is hardcoded. Drop the flag. |
+| Network timeout / slow downloads | Simply re-run; the mirror is already the faster AWS S3 replica |
 | "coiled-data.json not found" warning | GCS upload skipped (local-only mode) — expected if running without GCS credentials |
 | Member fails verification | Check network connectivity; member will be skipped and flagged in summary |
 

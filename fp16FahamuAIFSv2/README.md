@@ -61,10 +61,9 @@ python fp16FahamuAIFSv2/fp16_automate_aifs_gpu_pipeline_v2.py \
 
 - **Step 1 output:** `gs://aifs-aiquest-us-20251127/<date>_0000/input_v2/input_state_member_NNN.pkl`
   (kept separate from v1's `input/` so both versions coexist). Requires `coiled-data.json`
-  unless `--no-upload`. CPU only. `--source` picks the mirror
-  (**default `aws`**; also `ecmwf`/`azure`/`google`). The direct `ecmwf` portal is throttled
-  to 500 simultaneous connections, so the routine defaults to the **AWS S3** replica — pass
-  `--source ecmwf` only if you specifically need the primary portal.
+  unless `--no-upload`. CPU only. The open-data mirror is **hardcoded to AWS S3** (there is
+  no `--source` flag): the direct `ecmwf` portal is throttled to 500 simultaneous
+  connections, so the routine always uses the **AWS S3** replica.
 - **Step 2 output:** `gs://…/<date>_0000/fp16_v2_forecasts/aifs_ens_forecast_<date>_memberNNN_h*.grib`.
   Needs an Ampere+ GPU and the v2 software env (below).
 - **Steps 3–5:** reuse the `shared/` CLIs with the **`--v2`** flag (added for this model).
