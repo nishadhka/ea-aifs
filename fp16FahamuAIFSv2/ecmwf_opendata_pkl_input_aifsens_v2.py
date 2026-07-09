@@ -30,7 +30,7 @@ import numpy as np
 import earthkit.data as ekd
 import earthkit.regrid as ekr
 from google.cloud import storage
-from ecmwf.opendata import Client as OpendataClient
+# AWS S3 only - no ECMWF direct access
 
 # ---------------------------------------------------------------------------
 # v2.0 parameter lists (from run_AIFS_ENS_v2.0.ipynb)
@@ -214,10 +214,6 @@ def main():
                                     "(default: latest open-data)")
     ap.add_argument("--members", default="1-50",
                     help="ensemble members, e.g. '1-50', '1,5,10', '3' (default 1-50)")
-    ap.add_argument("--source", default="aws",
-                    choices=["ecmwf", "azure", "aws", "google"],
-                    help="ECMWF open-data mirror (default aws; the direct "
-                         "'ecmwf' portal is throttled to 500 connections)")
     ap.add_argument("--gcs-subpath", default=GCS_SUBPATH,
                     help=f"GCS subfolder under the date (default {GCS_SUBPATH})")
     ap.add_argument("--no-upload", action="store_true", help="skip GCS upload")
@@ -227,11 +223,12 @@ def main():
                     help="local output dir (default input_states_v2)")
     args = ap.parse_args()
 
-    if args.date:
-        d = args.date.replace("_", "")
-        DATE = datetime.datetime.strptime(d[:8] + (d[8:12] or "0000"), "%Y%m%d%H%M")
-    else:
-        DATE = OpendataClient(args.source).latest()
+    if not args.date:
+        print("ERROR: --date is required (latest date detection removed)")
+        return 1
+
+    d = args.date.replace("_", "")
+    DATE = datetime.datetime.strptime(d[:8] + (d[8:12] or "0000"), "%Y%m%d%H%M")
     datestr = DATE.strftime("%Y%m%d_%H%M")
     members = parse_members(args.members)
     upload = not args.no_upload
@@ -241,15 +238,14 @@ def main():
 
     ekd.config.set({"cache-policy": "user"})
     os.makedirs(args.out_dir, exist_ok=True)
-    print(f"AIFS ENS v2.0 input prep | init {DATE} | members {members[0]}-{members[-1]}"
-          f" | source {args.source} | upload={upload}")
+    print(f"AIFS ENS v2.0 input prep (AWS S3 only) | init {DATE} | members {members[0]}-{members[-1]} | upload={upload}")
 
     ok, fail, times = [], [], []
     for i, m in enumerate(members):
         print(f"\n{'='*60}\nMember {m} ({i+1}/{len(members)})\n{'='*60}")
         try:
             t0 = time.time()
-            state = create_input_state(DATE, m, source=args.source)
+            state = create_input_state(DATE, m, source="aws")
             if not verify_input_state(state, m):
                 fail.append(m)
                 continue
