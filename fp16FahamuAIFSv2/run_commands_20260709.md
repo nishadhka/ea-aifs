@@ -1,14 +1,26 @@
-# AIFS ENS v2.0 PKL Creation Commands - 20260709
+# AIFS ENS v2.0 Run Commands - 20260709
 
 **Date:** 20260709  
 **Members:** 1-50 (all 50 ensemble members)  
-**Step:** 1 (CPU) - Input preparation
+**Steps:** 1 (CPU) input prep · 2 (GPU) inference — *as actually run on the local
+RTX 5000 Ada box*, writing a local Icechunk store (no GCS upload, no GRIB).
+
+For the full local-GPU environment build see [`LOCAL_GPU_RUN.md`](LOCAL_GPU_RUN.md);
+for the store layout / commit cadence see [`ICECHUNK_PATH_A.md`](ICECHUNK_PATH_A.md)
+and [`ICECHUNK_COMMIT_CADENCE.md`](ICECHUNK_COMMIT_CADENCE.md).
 
 ## Environment Setup
 
+Two separate envs — the CPU ETL env (Step 1) and the GPU inference env (Step 2):
+
 ```bash
-# Activate the aifs-etl micromamba environment
+# Step 1 (CPU): input prep
 micromamba activate aifs-etl
+
+# Step 2 (GPU): inference — micromamba root prefix lives on the projects disk
+export MAMBA_ROOT_PREFIX=/tank/projects/micromamba
+PY=/tank/projects/micromamba/envs/aifs-gpu/bin/python
+export HF_HOME=/tank/projects/hf_cache        # keep the ~2.4 GB checkpoint off $HOME
 ```
 
 ## PKL Creation Command
@@ -76,16 +88,121 @@ input_states_v2/
 **Total local size:** ~48 GB (measured: 112 fields × 2 timesteps × 542,080 N320 cells, float64)  
 **GCS location:** `gs://aifs-aiquest-us-20251127/20260709_0000/input_v2/`
 
-## Next Steps (Step 2: GPU Inference)
+## Step 2: GPU inference on the local box (Icechunk output)
 
-Once pkl files are ready, run the GPU inference pipeline:
+For 20260709 the 50 pkls **already existed** in GCS, so Step 1 was not re-run — Step 2
+fetched them on demand. Run from this folder so `coiled-data.json` resolves.
 
 ```bash
-micromamba run -n gpu-env python fp16FahamuAIFSv2/fp16_automate_aifs_gpu_pipeline_v2.py \
-  --date 20260709_0000 --members 1-50 --lead-time 960
+cd fp16FahamuAIFSv2
+PY=/tank/projects/micromamba/envs/aifs-gpu/bin/python
+export HF_HOME=/tank/projects/hf_cache
+BASE=/tank/projects/aifs-run/20260709_0000
 ```
 
-This reads the input_v2/ pkl files and produces GRIB forecasts.
+### 2a. Single-member test first
+
+```bash
+# fetches member 001 (0.971 GB) from GCS if absent, then runs it
+$PY run_local_icechunk_v2.py \
+  --date 20260709_0000 --members 1 --lead-time 792 \
+  --input-dir $BASE/input_states --store $BASE/icechunk_v2 \
+  --n-members 50 --commit-every 1 --float-size f4 \
+  --write-hours 432-792 --skip-existing --gcs-fetch
+```
+
+Creates the store + schema (`50 × 132 × 542,080`, 120 fields) on the first member.
+Re-running is a no-op thanks to `--skip-existing`.
+
+### 2b. Full ensemble (members 1-50, one store, resumable)
+
+```bash
+$PY run_local_icechunk_v2.py \
+  --date 20260709_0000 --members 1-50 --lead-time 792 \
+  --input-dir $BASE/input_states --store $BASE/icechunk_v2 \
+  --n-members 50 --commit-every 1 --float-size f4 \
+  --write-hours 432-792 --skip-existing \
+  --gcs-fetch --cleanup-pkl
+```
+
+Run it detached (it takes hours): `nohup … > /tank/projects/run_0709_all.log 2>&1 &`
+
+### Why these flags
+
+| Flag | Why |
+|------|-----|
+| `--lead-time 792` | Downstream reads at most 792 h. The v2 default of 960 h overshoots by 168 h of pure compute. (Cloud Run's `app.py` also uses 792.) |
+| `--write-hours 432-792` | `shared/aifs_n320_grib_1p5defg_nc_cli.py` reads only the `432-504 … 720-792` windows (days 18-33). The rollout still **computes** every step; steps outside the window are simply not **stored** (no chunks → read back as `NaN`). Stores **61/132 steps** → **12 GB/member instead of ~30 GB**. |
+| `--commit-every 1` | One ACID commit per 6 h model step (the native timestep). `time_chunk` is aligned to it, so writes never amplify. |
+| `--float-size f4` | **Do not use `f2`.** 12 of 120 fields exceed float16's 65,504 max — incl. `msl` (104,063), which downstream needs — and would silently become `±inf`. See `ICECHUNK_PATH_A.md` §1.2. |
+| `--skip-existing` | Idempotent resume: members already complete are skipped *before* any download or inference. |
+| `--gcs-fetch` | Pulls each member's pkl from GCS, prefetching the **next** member during the current member's inference, so the ~92 s transfer is hidden. |
+| `--cleanup-pkl` | Deletes each pkl after use — ~3 GB on disk at a time instead of ~48 GB. |
+| `--n-members 50` | Sizes the store's `member` axis; all 50 members share **one** store with disjoint chunks. |
+
+### Monitoring
+
+`stdout` is block-buffered into the log, so `[OK]` lines lag by minutes. The **store is
+the reliable progress signal**:
+
+```bash
+# how many members are complete + latest commit
+$PY - <<'EOF'
+import icechunk, zarr, numpy as np
+r = icechunk.Repository.open_or_create(
+    icechunk.local_filesystem_storage("/tank/projects/aifs-run/20260709_0000/icechunk_v2"))
+print("latest commit:", list(r.ancestry(branch="main"))[0].message)
+a = zarr.open_group(r.readonly_session("main").store, mode="r")["2t"]
+done = [m + 1 for m in range(50) if np.isfinite(a[m, 131, 0])]
+print(f"members complete: {len(done)}/50")
+EOF
+
+du -sh /tank/projects/aifs-run/20260709_0000/icechunk_v2
+nvidia-smi --query-gpu=memory.used,utilization.gpu --format=csv,noheader
+```
+
+### Verify a member
+
+```bash
+$PY - <<'EOF'
+import icechunk, zarr, numpy as np
+r = icechunk.Repository.open_or_create(
+    icechunk.local_filesystem_storage("/tank/projects/aifs-run/20260709_0000/icechunk_v2"))
+rg = zarr.open_group(r.readonly_session("main").store, mode="r")
+a = np.asarray(rg["2t"][0, :, 0]); fin = np.isfinite(a)
+idx = np.where(fin)[0]
+print("2t", rg["2t"].shape, "chunks", rg["2t"].chunks)
+print(f"stored idx {idx.min()}..{idx.max()} = hours {(idx.min()+1)*6}..{(idx.max()+1)*6}")
+for v in ("2t", "msl", "tp"):
+    print(f"  {v} @432h mean {np.nanmean(rg[v][0,71,:]):,.2f}")
+EOF
+```
+
+### Measured (this box: RTX 5000 Ada, 30 GB, FP16, 16 chunks)
+
+| | |
+|---|---|
+| Per member | **~317 s** (~11.8 GB VRAM, 100 % GPU); download hidden behind inference |
+| Store per member | **11.6 GB** (61 stored steps × 120 fields, `f4`) |
+| Full ensemble | **~4.5 h**, **~580 GB** — fits the 1.4 TB `/tank/projects` |
+| Commits | 61 per member (one per 6 h step) + schema + init |
+| Output | `/tank/projects/aifs-run/20260709_0000/icechunk_v2`, tag `cycle-20260709_0000` |
+
+> Storing all 160 steps of a 960 h run would be **30 GB/member → ~1.5 TB**, which does
+> **not** fit. The `--write-hours` window is what makes the 50-member run viable here.
+
+### Fallback: the GRIB path (no Icechunk)
+
+`fp16_automate_aifs_gpu_pipeline_v2.py` still works and is untouched. For a local run,
+`--no-upload --keep-local` skip the GCS upload and the cleanup:
+
+```bash
+$PY fp16_automate_aifs_gpu_pipeline_v2.py \
+  --date 20260709_0000 --members 1 --lead-time 960 \
+  --input-dir $BASE/input_states --output-dir $BASE/fp16_v2_forecasts_local \
+  --no-upload --keep-local
+```
+(Member 001 / 960 h → 14 GRIB files, 20.2 GB, 394 s.)
 
 ## Troubleshooting
 
@@ -96,15 +213,25 @@ This reads the input_v2/ pkl files and produces GRIB forecasts.
 | Network timeout / slow downloads | Simply re-run; the mirror is already the faster AWS S3 replica |
 | "coiled-data.json not found" warning | GCS upload skipped (local-only mode) — expected if running without GCS credentials |
 | Member fails verification | Check network connectivity; member will be skipped and flagged in summary |
+| **Step 2:** `ImportError: Could not import huggingface_hub` | anemoi fetches the checkpoint through it. `pip install huggingface_hub` (it is missing from the README's GPU stack list). |
+| **Step 2:** truncated pkl (e.g. 56 MB instead of 0.97 GB) | A killed download left a partial file. `--gcs-fetch` now downloads to `*.part` and renames only after the byte count matches the blob. |
+| **Step 2:** log shows no progress for minutes | `stdout` is block-buffered into the log. Query the store's `ancestry()` instead (see *Monitoring*). |
+| **Step 2:** store much larger than expected | Check `--write-hours` / `--commit-every`. A big `time_chunk` written step-by-step read-modify-writes the whole chunk each step (~11.6× amplification at 24 steps). See `ICECHUNK_COMMIT_CADENCE.md`. |
 
 ## Links
 
 - **Reference:** [AIFS ENS v2.0 Notebook](https://huggingface.co/ecmwf/aifs-ens-2.0/blob/main/run_AIFS_ENS_v2.0.ipynb)
 - **Input prep script:** `fp16FahamuAIFSv2/ecmwf_opendata_pkl_input_aifsens_v2.py`
+- **Local GPU runner:** `fp16FahamuAIFSv2/run_local_icechunk_v2.py`
 - **v2 README:** `fp16FahamuAIFSv2/README.md`
+- **Local GPU env + benchmark:** `fp16FahamuAIFSv2/LOCAL_GPU_RUN.md`
 
 ---
 
-**Status:** Job started - see progress below
+**Status (local GPU run, 20260709_0000):**
 
-[Processing results will be appended here once complete]
+- Input: 50/50 pkls present in `gs://aifs-aiquest-us-20251127/20260709_0000/input_v2/`
+  (0.971 GB each) — Step 1 not re-run.
+- Step 2: member 001 validated (61/132 steps, 12 GB, 311 s), then members 2-50 launched
+  into the same store with `--skip-existing --gcs-fetch --cleanup-pkl`.
+- Pace: **~317 s/member**, **11.6 GB/member** → ETA **~4.5 h**, final store **~580 GB**.
