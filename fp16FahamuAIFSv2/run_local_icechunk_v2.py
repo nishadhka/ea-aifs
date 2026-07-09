@@ -18,11 +18,22 @@ Input pkls are the 112-field member states from
 ``ecmwf_opendata_pkl_input_aifsens_v2.py`` (run it with ``--no-upload --keep-local``
 to produce them locally).
 
+All ensemble members land in **one store**: the schema's ``member`` axis is sized by
+``--n-members`` (default 50) and each member writes its own slice, owning disjoint chunks
+(member-chunk size 1), so members never conflict. ``--skip-existing`` makes a multi-member
+run idempotent — an interrupted 50-member run resumes without redoing finished members.
+
 Usage::
 
+    # single member, short lead
     python run_local_icechunk_v2.py --date 20260625_0000 --members 1 --lead-time 72 \
         --input-dir /tank/projects/aifs-run/20260625_0000/input_states \
         --store     /tank/projects/aifs-run/20260625_0000/icechunk_v2
+
+    # full ensemble, all 50 members into the SAME store, resumable
+    python run_local_icechunk_v2.py --date 20260625_0000 --members 1-50 --lead-time 960 \
+        --input-dir .../input_states --store .../icechunk_v2 \
+        --commit-every 1 --skip-existing
 """
 
 import os
@@ -57,15 +68,15 @@ def parse_member_range(member_str):
 def run(date_str, members, input_dir, store_path, lead_time,
         n_members=DEFAULT_N_MEMBERS, precision=INFERENCE_PRECISION,
         num_chunks=INFERENCE_NUM_CHUNKS, float_size="f4", tag=True,
-        commit_every=1):
+        commit_every=1, skip_existing=False):
 
     # VRAM knobs must be set before the model / CUDA context is created.
     os.environ["ANEMOI_INFERENCE_NUM_CHUNKS"] = str(num_chunks)
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
     import fp16_multi_run_AIFS_ENS_v2 as runmod
-    from icechunk_output import (open_repo_local, init_schema,
-                                 schema_exists, IcechunkMemberWriter)
+    from icechunk_output import (open_repo_local, init_schema, schema_exists,
+                                 member_written, IcechunkMemberWriter)
     from anemoi.inference.runners.simple import SimpleRunner
 
     bad = [m for m in members if m < 1 or m > n_members]
@@ -85,6 +96,8 @@ def run(date_str, members, input_dir, store_path, lead_time,
     print(f"Lead time:   {lead_time}h ({lead_time // 24}d) -> {n_steps} steps @ {TIME_STEP_HOURS}h")
     print(f"Commit:      every {commit_every} step(s) = {commit_every * TIME_STEP_HOURS}h "
           f"| time_chunk={commit_every} (aligned, no amplification)")
+    print(f"Member axis: 1..{n_members} in ONE store"
+          + (" | skip already-written members (resume)" if skip_existing else ""))
     print("=" * 70)
 
     repo = open_repo_local(store_path)
@@ -95,10 +108,18 @@ def run(date_str, members, input_dir, store_path, lead_time,
                           device="cuda", precision=precision)
     print(f"Model loaded in {time.time() - t0:.1f}s\n")
 
-    ok, failed, snap = [], [], None
+    ok, failed, skipped, snap = [], [], [], None
     for member in members:
         m_t0 = time.time()
         print(f"\n--- Member {member:03d} ---")
+
+        # Idempotent resume: a member whose final step is already present is done.
+        # Checked before the pkl load / inference so a resumed run does no wasted work.
+        if skip_existing and schema_exists(repo) and member_written(repo, member - 1, n_steps):
+            print(f"    [SKIP] member {member:03d} already complete in store")
+            skipped.append(member)
+            continue
+
         try:
             input_state = runmod.load_input_state_from_pickle(member, input_dir)
         except FileNotFoundError as e:
@@ -157,7 +178,10 @@ def run(date_str, members, input_dir, store_path, lead_time,
             print(f"\n[TAG] skipped ({e})")
 
     print("\n" + "=" * 70)
-    print(f"DONE: {len(ok)}/{len(members)} members -> {store_path}")
+    print(f"DONE: {len(ok)} written, {len(skipped)} skipped, {len(failed)} failed "
+          f"of {len(members)} members -> {store_path}")
+    if skipped:
+        print(f"Skipped (already in store): {skipped}")
     if failed:
         print(f"Failed: {failed}")
     print("=" * 70)
@@ -186,6 +210,9 @@ def main():
                     help="commit every N model steps (1 = every 6h = per step, "
                          "default; 2 = 12h, 12 = 72h). time_chunk is aligned to this "
                          "so writes never amplify.")
+    ap.add_argument("--skip-existing", action="store_true",
+                    help="skip members whose final step is already in the store "
+                         "(idempotent resume of an interrupted multi-member run)")
     ap.add_argument("--no-tag", action="store_true", help="do not tag the cycle")
     args = ap.parse_args()
 
@@ -194,7 +221,8 @@ def main():
              store_path=args.store, lead_time=args.lead_time,
              n_members=args.n_members, precision=args.precision,
              num_chunks=args.chunks, float_size=args.float_size,
-             tag=not args.no_tag, commit_every=args.commit_every)
+             tag=not args.no_tag, commit_every=args.commit_every,
+             skip_existing=args.skip_existing)
     return 0 if ok else 1
 
 

@@ -107,6 +107,32 @@ Implemented in `icechunk_output.py` + `run_local_icechunk_v2.py`:
 3.1 GB logical (0.74×) — no amplification**. Unwritten members read back as **NaN** (fill),
 not 0. `--commit-every 2` → 12 h, `12` → 72 h (all with aligned `time_chunk`).
 
+### Validated at full scale (member 001, **960 h / 160 steps**, per-step 6 h commits)
+
+| | |
+|---|---|
+| Commits | **160** (one per 6 h step) + schema + init = **162 on `main`** |
+| Wall clock | **494.9 s (8.25 min)** |
+| Store | **30 GB** vs **41.6 GB logical** (`f4`) → **0.72× — no amplification** |
+| Schema | `(50, 160, 542080)`, 120 vars, chunks `(1, 1, 542080)`, tag `cycle-20260702_0000` |
+| Correctness | all 160 steps finite; h960 `2t` mean **289.2 K** |
+
+**Cost of per-step commits:** the same 960 h member via the GRIB path took **394 s**, so 160
+commits add **~101 s (~0.63 s/commit, +25 %)** — a modest price for a durable snapshot every
+6 h and no upload leg. `--float-size f2` roughly halves the 30 GB (the model already runs FP16).
+
+### All 50 members live in ONE store
+The schema's `member` axis is sized by `--n-members` (default 50) and each member writes its
+own slice, owning **disjoint chunks** (member-chunk size 1) — so members never conflict and
+`--members 1-50` fills a single store. Verified: members 1/5/50 written into one
+`(50, …)` store, schema inited once, unwritten members read **NaN**. Sequential inference ⇒
+linear commits ⇒ zero conflicts (`ICECHUNK_PATH_A.md` §3.A).
+
+`--skip-existing` makes a 50-member run **idempotent/resumable**: a member whose final step is
+already present is skipped *before* the pkl load and inference, so an interrupted run picks up
+where it stopped. Verified against the real 960 h store (member 1 → present, members 2/50 →
+absent).
+
 ## 3. Recommendation
 
 1. **Do not write the `(1, n_steps, values)` chunk step-by-step.** That is the one

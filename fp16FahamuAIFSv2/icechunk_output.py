@@ -118,6 +118,23 @@ def schema_exists(repo, sentinel="time"):
         return False
 
 
+def member_written(repo, member_index, n_steps, branch="main", sentinel="2t"):
+    """True if ``member_index``'s final step is already present (finite) in the store.
+
+    Used for idempotent resume of a multi-member run: a member whose last step is
+    non-NaN was fully written, so it can be skipped. ``sentinel`` should be a variable
+    that is *not* NaN-masked (``2t`` is a safe default; falls back to the first data var).
+    """
+    try:
+        root = zarr.open_group(repo.readonly_session(branch).store, mode="r")
+        keys = list(root.array_keys())
+        var = sentinel if sentinel in keys else next(
+            k for k in keys if k not in ("latitude", "longitude", "time", "member"))
+        return bool(np.isfinite(root[var][int(member_index), int(n_steps) - 1, 0]))
+    except Exception:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Per-member writer (one ACID commit per member)
 # ---------------------------------------------------------------------------
