@@ -30,9 +30,14 @@ from typing import List, Optional
 from google.cloud import storage
 from google.oauth2 import service_account
 
-# Load environment variables from .env file
-from dotenv import load_dotenv
-load_dotenv()
+# Load environment variables from .env file.
+# Search the *working directory* first: the docs say "run from this folder so
+# coiled-data.json and .env resolve", but dotenv's default find_dotenv() searches
+# upward from THIS module's directory (shared/), which never holds the .env — so the
+# AIWQ_PASSWORD silently stayed unset and the climatology FTP login failed with
+# "530 Login authentication failed". Fall back to the module-relative search.
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv(usecwd=True) or find_dotenv())
 
 def parse_member_range(member_str: str) -> List[int]:
     """Parse member range string like '1-50' or '1,2,3' into list of integers."""
@@ -202,10 +207,15 @@ def download_ensemble_nc_from_gcs_chunked(
     icechunk_store_path: str = "./ensemble_icechunk_store",
     skip_download_if_exists: bool = True,
     fp16: bool = False,
-    v2: bool = False
+    v2: bool = False,
+    local_only: bool = False
 ):
     """
     Download ensemble NetCDF files from GCS and combine using icechunk for memory efficiency.
+
+    ``local_only=True`` skips GCS entirely: members are discovered by globbing ``local_dir``
+    for ``*member<NNN>.nc``. Use it when Step 3a was run with ``--no-upload --output-dir``
+    (fully local pipeline, no service account needed).
 
     This function processes members one at a time and stores them in an icechunk store,
     avoiding the memory issues that occur when loading all members into RAM at once.
@@ -245,41 +255,58 @@ def download_ensemble_nc_from_gcs_chunked(
     print(f"   Icechunk store: {icechunk_store_path}")
 
     try:
-        # Initialize GCS client
-        credentials = service_account.Credentials.from_service_account_file(service_account_path)
-        client = storage.Client(credentials=credentials)
-        bucket = client.bucket(gcs_bucket)
+        bucket = None
+        if not local_only:
+            # Initialize GCS client
+            credentials = service_account.Credentials.from_service_account_file(service_account_path)
+            client = storage.Client(credentials=credentials)
+            bucket = client.bucket(gcs_bucket)
 
         # Create local directory and clean up existing icechunk store
         os.makedirs(local_dir, exist_ok=True)
         if os.path.exists(icechunk_store_path):
             shutil.rmtree(icechunk_store_path)
 
-        # List available NetCDF files in GCS
-        print(f"   🔍 Scanning for available NetCDF files...")
-        blobs = bucket.list_blobs(prefix=gcs_prefix)
-
         available_files = []
-        for blob in blobs:
-            if blob.name.endswith('.nc'):
-                # Extract member number from filename
-                filename = os.path.basename(blob.name)
-                match = re.search(r'member(\d+)\.nc', filename)
+        if local_only:
+            print(f"   🔍 Scanning local directory {local_dir} for NetCDF files...")
+            for filename in sorted(os.listdir(local_dir)):
+                match = re.search(r'member(\d+)\.nc$', filename)
                 if match:
                     member_num = int(match.group(1))
                     if members is None or member_num in members:
                         available_files.append({
-                            'blob_name': blob.name,
+                            'blob_name': None,
                             'filename': filename,
                             'member': member_num
                         })
+        else:
+            # List available NetCDF files in GCS
+            print(f"   🔍 Scanning for available NetCDF files...")
+            blobs = bucket.list_blobs(prefix=gcs_prefix)
+
+            for blob in blobs:
+                if blob.name.endswith('.nc'):
+                    # Extract member number from filename
+                    filename = os.path.basename(blob.name)
+                    match = re.search(r'member(\d+)\.nc', filename)
+                    if match:
+                        member_num = int(match.group(1))
+                        if members is None or member_num in members:
+                            available_files.append({
+                                'blob_name': blob.name,
+                                'filename': filename,
+                                'member': member_num
+                            })
 
         if not available_files:
-            print(f"   ❌ No NetCDF files found in {gcs_prefix}")
+            where = local_dir if local_only else gcs_prefix
+            print(f"   ❌ No NetCDF files found in {where}")
             return None
 
         available_files.sort(key=lambda x: x['member'])  # Sort by member number
-        print(f"   ✅ Found {len(available_files)} NetCDF files in GCS")
+        print(f"   ✅ Found {len(available_files)} NetCDF files "
+              f"{'locally' if local_only else 'in GCS'}")
 
         # Create local icechunk repository
         local_storage = icechunk.local_filesystem_storage(icechunk_store_path)
@@ -296,7 +323,9 @@ def download_ensemble_nc_from_gcs_chunked(
 
             # Download file if it doesn't exist locally
             local_path = os.path.join(local_dir, file_info['filename'])
-            if not os.path.exists(local_path) or not skip_download_if_exists:
+            if local_only:
+                print(f"      Using local file: {file_info['filename']}")
+            elif not os.path.exists(local_path) or not skip_download_if_exists:
                 print(f"      Downloading {file_info['filename']}")
                 blob = bucket.blob(file_info['blob_name'])
                 blob.download_to_filename(local_path)
@@ -540,7 +569,9 @@ def load_ensemble_from_gcs(
     use_icechunk: bool = True,
     skip_download_if_exists: bool = True,
     fp16: bool = False,
-    v2: bool = False
+    v2: bool = False,
+    local_only: bool = False,
+    local_dir: str = "./ensemble_nc_files"
 ):
     """
     Convenience function to download and load ensemble data from GCS.
@@ -569,9 +600,11 @@ def load_ensemble_from_gcs(
             members=members,
             gcs_bucket=gcs_bucket,
             service_account_path=service_account_path,
+            local_dir=local_dir,
             skip_download_if_exists=skip_download_if_exists,
             fp16=fp16,
-            v2=v2
+            v2=v2,
+            local_only=local_only
         )
     else:
         return download_ensemble_nc_from_gcs(
@@ -854,6 +887,10 @@ Examples:
                        help='Output directory for quintile file')
     parser.add_argument('--clim-dir', default='./',
                        help='Directory containing climatology files')
+    parser.add_argument('--local-nc-dir', default=None,
+                       help='Read the per-member 1.5deg NetCDFs from this local directory '
+                            'instead of GCS (pairs with Step 3a --no-upload --output-dir). '
+                            'No service account needed for the ensemble load.')
     parser.add_argument('--bucket', default='aifs-aiquest-us-20251127',
                        help='GCS bucket name')
     parser.add_argument('--service-account', default='coiled-data.json',
@@ -919,7 +956,9 @@ Examples:
             use_icechunk=use_icechunk,
             skip_download_if_exists=args.skip_existing,
             fp16=args.fp16,
-            v2=args.v2
+            v2=args.v2,
+            local_only=bool(args.local_nc_dir),
+            local_dir=args.local_nc_dir or "./ensemble_nc_files"
         )
 
     if fds is None:

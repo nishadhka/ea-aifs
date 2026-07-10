@@ -169,7 +169,8 @@ class GRIBToNetCDFProcessor:
     def __init__(self, date_str: str, members: List[int], fp16: bool = False, skip_upload: bool = False,
                  bucket: str = "aifs-aiquest-us-20251127", service_account: str = "coiled-data.json",
                  v2: bool = False, source: str = "grib", icechunk_store: str = None,
-                 icechunk_tag: str = None, icechunk_branch: str = "main"):
+                 icechunk_tag: str = None, icechunk_branch: str = "main",
+                 output_dir: str = None):
         """
         Initialize processor with configurable date, members, and precision mode.
 
@@ -222,6 +223,8 @@ class GRIBToNetCDFProcessor:
         # written directly by the inference, per ICECHUNK_PATH_A.md §4.1). The Icechunk
         # path produces an identical NetCDF; only where the N320 fields come from changes.
         self.source = source
+        # If set, the per-member NetCDF is moved here and NOT deleted by cleanup.
+        self.output_dir = output_dir
         self.icechunk_store = icechunk_store
         self.icechunk_tag = icechunk_tag
         self.icechunk_branch = icechunk_branch
@@ -747,6 +750,14 @@ class GRIBToNetCDFProcessor:
                 print(f"  ❌ NetCDF conversion failed for member {member:03d}")
                 return False
 
+            # Keep the NetCDF: move it out of the temp dir before any cleanup runs.
+            if self.output_dir:
+                os.makedirs(self.output_dir, exist_ok=True)
+                dest = os.path.join(self.output_dir, os.path.basename(nc_file))
+                shutil.move(nc_file, dest)
+                nc_file = dest
+                print(f"    📁 Kept NetCDF: {nc_file}")
+
             # Step 3: Upload NetCDF to GCS (skip if --no-upload flag is set)
             if self.skip_upload:
                 print("☁️  Step 3: Skipping upload (--no-upload flag set)")
@@ -767,7 +778,7 @@ class GRIBToNetCDFProcessor:
         finally:
             # Step 4: Cleanup NetCDF file and earthkit directories
             print("🧹 Step 4: Final cleanup")
-            if nc_file:
+            if nc_file and not self.output_dir:      # --output-dir means keep it
                 self.cleanup_local_files([nc_file])
             self.cleanup_earthkit_dirs()
             gc.collect()
@@ -907,6 +918,8 @@ def _run_member_subprocess(member: int, args, base_workdir: str, slot=None):
             cmd += ['--icechunk-tag', args.icechunk_tag]
         if args.icechunk_branch and args.icechunk_branch != 'main':
             cmd += ['--icechunk-branch', args.icechunk_branch]
+    if args.output_dir:
+        cmd += ['--output-dir', args.output_dir]
     if args.fp16:
         cmd.append('--fp16')
     if args.v2:
@@ -992,6 +1005,9 @@ Examples:
                             'Beware a tag written by a partial run — see run_commands_*.md.')
     parser.add_argument('--icechunk-branch', default='main',
                        help='Branch to read when no --icechunk-tag is given (default main)')
+    parser.add_argument('--output-dir', default=None,
+                       help='Keep each member NetCDF in this directory instead of deleting it '
+                            '(use with --no-upload for a fully local Step 3a).')
 
     args = parser.parse_args()
 
@@ -1018,6 +1034,7 @@ Examples:
             icechunk_store=args.icechunk_store,
             icechunk_tag=args.icechunk_tag,
             icechunk_branch=args.icechunk_branch,
+            output_dir=args.output_dir,
         )
         # Process just this one member. A fully-local icechunk run (no upload) never
         # touches GCS, so don't require the service account for it.

@@ -101,11 +101,21 @@ python fp16FahamuAIFSv2/fp16_automate_aifs_gpu_pipeline_v2.py \
   > call also does a one-time N320 matrix download (tens of seconds) — that's normal, not a hang.
 
   > **Why this matters:** the quintile CLI (3b) needs `AI_WQ_package` to fetch the 20-yr
-  > quintile **climatology** from the AI-WQ server (`ftp.ecmwf.int`, public — no password).
+  > quintile **climatology** from the AI-WQ server. It logs in as
+  > `ftplib.FTP('ftp.ecmwf.int', 'ai_weather_quest', password)` — so it **does need
+  > `AIWQ_PASSWORD`** (from `.env`). (The host also allows anonymous login, but the
+  > climatology is fetched with that account, not anonymously.)
   > If the package is missing it does **not** error loudly — it prints
   > `AI_WQ_package not available, using local climatology files`, silently falls back to
   > local files that don't exist, and ends with `No quintile data calculated`. If you see
   > that, the fix is `pip install AI_WQ_package`, **not** a server/FTP problem.
+  >
+  > **`530 Login authentication failed`** means `AIWQ_PASSWORD` was never loaded, not that
+  > the password is wrong. `load_dotenv()` used to search upward from the *script's*
+  > directory (`shared/`), which never holds the `.env` — so running
+  > `python ../shared/ensemble_quintile_analysis_cli.py` from this folder still missed it.
+  > Both CLIs now resolve `.env` from the **working directory** first
+  > (`find_dotenv(usecwd=True)`), so "run from this folder" behaves as documented.
 
   Then run from this folder so `coiled-data.json` and `.env` resolve:
 

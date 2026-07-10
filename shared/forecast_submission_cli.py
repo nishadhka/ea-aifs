@@ -30,9 +30,12 @@ import argparse
 from pathlib import Path
 from typing import List, Tuple, Optional
 
-# Load environment variables from .env file
-from dotenv import load_dotenv
-load_dotenv()
+# Load environment variables from .env file.
+# Search the working directory first (see ensemble_quintile_analysis_cli.py): dotenv's
+# default find_dotenv() searches from this module's directory (shared/), not the cwd
+# the docs tell you to run from. --env-file still overrides.
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv(usecwd=True) or find_dotenv())
 
 # Import submission function from ensemble_quintile_analysis_cli
 try:
