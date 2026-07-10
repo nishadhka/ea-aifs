@@ -217,6 +217,7 @@ $PY fp16_automate_aifs_gpu_pipeline_v2.py \
 | **Step 2:** truncated pkl (e.g. 56 MB instead of 0.97 GB) | A killed download left a partial file. `--gcs-fetch` now downloads to `*.part` and renames only after the byte count matches the blob. |
 | **Step 2:** log shows no progress for minutes | `stdout` is block-buffered into the log. Query the store's `ancestry()` instead (see *Monitoring*). |
 | **Step 2:** store much larger than expected | Check `--write-hours` / `--commit-every`. A big `time_chunk` written step-by-step read-modify-writes the whole chunk each step (~11.6× amplification at 24 steps). See `ICECHUNK_COMMIT_CADENCE.md`. |
+| **Step 2:** `[TAG] skipped (tag already exists, tags are immutable)` | A previous partial run already tagged the cycle. Icechunk tags are immutable **and deleted names are tombstoned — never reusable**, so do *not* delete to "fix" it. The runner now only tags once **all** `--n-members` are present; read a partial store via `branch="main"`, not a tag. |
 
 ## Links
 
@@ -228,10 +229,29 @@ $PY fp16_automate_aifs_gpu_pipeline_v2.py \
 
 ---
 
-**Status (local GPU run, 20260709_0000):**
+**Status (local GPU run, 20260709_0000): ✅ COMPLETE**
 
 - Input: 50/50 pkls present in `gs://aifs-aiquest-us-20251127/20260709_0000/input_v2/`
   (0.971 GB each) — Step 1 not re-run.
-- Step 2: member 001 validated (61/132 steps, 12 GB, 311 s), then members 2-50 launched
-  into the same store with `--skip-existing --gcs-fetch --cleanup-pkl`.
-- Pace: **~317 s/member**, **11.6 GB/member** → ETA **~4.5 h**, final store **~580 GB**.
+- Step 2: member 001 validated first, then members 2-50 into the same store with
+  `--skip-existing --gcs-fetch --cleanup-pkl`.
+- Result: **49 written, 1 skipped, 0 failed**, wall clock **14,219 s (3.95 h)**
+  (~317 s/member). Store **584 GB** at
+  `/tank/projects/aifs-run/20260709_0000/icechunk_v2`.
+- Verified: **3052 commits** on `main` (= 2 + 61 × 50), **50/50 members** each with
+  exactly **61 stored steps** (indices 71..131 = hours 432..792), shape
+  `(50, 132, 542080)`, chunks `(1, 1, 542080)`.
+
+> **Read the full ensemble via `branch="main"` or the tag `cycle-20260709_0000-final`.**
+> The tag `cycle-20260709_0000` was created by the *single-member test run* and points at a
+> snapshot where **only member 001 is present** (the other 49 read as `NaN`). Icechunk tags
+> are immutable and deleted names are tombstoned, so it cannot be repointed. The runner now
+> tags only when the whole ensemble is complete.
+
+```python
+import icechunk, zarr
+r = icechunk.Repository.open_or_create(icechunk.local_filesystem_storage(
+    "/tank/projects/aifs-run/20260709_0000/icechunk_v2"))
+ro = r.readonly_session(tag="cycle-20260709_0000-final")   # or branch="main"
+ds = zarr.open_group(ro.store, mode="r")
+```

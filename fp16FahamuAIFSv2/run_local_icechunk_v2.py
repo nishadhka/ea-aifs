@@ -287,12 +287,23 @@ def run(date_str, members, input_dir, store_path, lead_time,
     if pool:
         pool.shutdown(wait=False, cancel_futures=True)
 
+    # Tag ONLY once the whole ensemble is present. Icechunk tags are immutable *and*
+    # deleted names are tombstoned (never reusable), so tagging after a partial run
+    # would permanently bind `cycle-<date>` to a 1-member snapshot -- a reader would
+    # then silently get NaNs for every other member.
     if tag and snap is not None:
-        try:
-            repo.create_tag(f"cycle-{date_str}", snapshot_id=snap)
-            print(f"\n[TAG] cycle-{date_str} -> {snap}")
-        except Exception as e:
-            print(f"\n[TAG] skipped ({e})")
+        complete = [m for m in range(1, n_members + 1)
+                    if member_written(repo, m - 1, last_kept_index)]
+        if len(complete) < n_members:
+            print(f"\n[TAG] not tagged: {len(complete)}/{n_members} members present. "
+                  f"Re-run the remaining members (--skip-existing); the cycle is tagged "
+                  f"only when the ensemble is complete.")
+        else:
+            try:
+                repo.create_tag(f"cycle-{date_str}", snapshot_id=snap)
+                print(f"\n[TAG] cycle-{date_str} -> {snap} ({n_members}/{n_members} members)")
+            except Exception as e:
+                print(f"\n[TAG] skipped ({e})")
 
     print("\n" + "=" * 70)
     print(f"DONE: {len(ok)} written, {len(skipped)} skipped, {len(failed)} failed "
