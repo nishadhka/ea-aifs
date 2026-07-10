@@ -288,6 +288,16 @@ Current chain (GRIB-based):
 Variable map (already in the regrid CLI): `pr→tp`, `tas→2t`, `mslp→msl`.
 
 ### 4.1 Regrid step reads the Icechunk store instead of GRIB
+
+> ✅ **IMPLEMENTED** — `shared/aifs_n320_grib_1p5defg_nc_cli.py --source icechunk
+> --icechunk-store PATH [--icechunk-tag TAG]`. Output is structurally identical to the
+> GRIB path (validated: dims, coords, dtypes and the sparse `(time, step)` NaN block
+> pattern all match), so Steps 3b–3d are unchanged. `--source grib` remains the default.
+> Two gotchas found while wiring it: `earthkit-regrid` has **no batch mode** for N320
+> (a leading dim raises `matmul: dimension mismatch`), so fields are regridded one step at
+> a time; and a GRIB window `h432-504` holds hours **438..504**, not 432..504 — the store
+> index is `hour/6 - 1` (confirmed by an offset sweep).
+
 The regrid math is unchanged — only the **source** changes from "download GRIB + cfgrib"
 to "open the cycle store and select the cells". The store already holds native N320
 `values`, so `earthkit-regrid` runs on them directly:

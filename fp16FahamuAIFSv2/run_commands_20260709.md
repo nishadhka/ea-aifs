@@ -191,6 +191,36 @@ EOF
 > Storing all 160 steps of a 960 h run would be **30 GB/member → ~1.5 TB**, which does
 > **not** fit. The `--write-hours` window is what makes the 50-member run viable here.
 
+## Step 3a: regrid 432-792h → 1.5° NetCDF, reading the Icechunk store
+
+`shared/aifs_n320_grib_1p5defg_nc_cli.py` gained `--source icechunk`: it reads the native
+N320 fields straight from the store (no GRIB, no GCS download) and writes the **identical**
+NetCDF the GRIB path produced, so Steps 3b–3d are unchanged.
+
+```bash
+$PY ../shared/aifs_n320_grib_1p5defg_nc_cli.py \
+  --date 20260709_0000 --members 1-50 --v2 --no-upload \
+  --source icechunk \
+  --icechunk-store /tank/projects/aifs-run/20260709_0000/icechunk_v2 \
+  --icechunk-tag cycle-20260709_0000-final
+```
+
+Drop `--no-upload` to publish to `<date>/fp16_v2_1p5deg_nc/`. Prefer `--icechunk-tag` over
+`--icechunk-branch main` for reproducibility — but **use the `-final` tag** (see the tag note
+below). With `--source icechunk --no-upload` no GCS credentials are needed at all.
+
+**Output contract (validated against the GRIB path, member 001):** dims
+`(member=1, time=5, step=60, latitude=121, longitude=240)`, vars `2t`/`msl`/`tp` `float64`,
+`step` = `timedelta64[us]` hours 438..792, lat `90..-90`, lon `0..358.5`. `xr.concat` outer-joins
+on `step`, so each `time` block holds only its own 12 steps and the rest are `NaN` (80 % NaN
+overall) — exactly why 3b does `.isel(time=t).sum(dim='step', skipna=True)`. The NaN/valid
+block pattern is **identical** to the GRIB path.
+
+> Values differ from a GRIB run of the "same" member because aifs-ens-2.0 injects noise per
+> run — two inferences of one member are different stochastic realisations. Verified: the
+> difference grows with lead time (0.44 K @ h6 → 0.90 K @ h72 → 2.4 K @ h438), and the step
+> alignment `index = hour/6 - 1` is confirmed by an offset sweep.
+
 ### Fallback: the GRIB path (no Icechunk)
 
 `fp16_automate_aifs_gpu_pipeline_v2.py` still works and is untouched. For a local run,
