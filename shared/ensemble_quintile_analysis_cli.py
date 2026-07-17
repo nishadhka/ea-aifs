@@ -571,7 +571,8 @@ def load_ensemble_from_gcs(
     fp16: bool = False,
     v2: bool = False,
     local_only: bool = False,
-    local_dir: str = "./ensemble_nc_files"
+    local_dir: str = "./ensemble_nc_files",
+    icechunk_store_path: str = "./ensemble_icechunk_store"
 ):
     """
     Convenience function to download and load ensemble data from GCS.
@@ -601,6 +602,7 @@ def load_ensemble_from_gcs(
             gcs_bucket=gcs_bucket,
             service_account_path=service_account_path,
             local_dir=local_dir,
+            icechunk_store_path=icechunk_store_path,
             skip_download_if_exists=skip_download_if_exists,
             fp16=fp16,
             v2=v2,
@@ -883,10 +885,14 @@ Examples:
                        help='Skip downloading existing files (default: True)')
     parser.add_argument('--skip-ensemble', action='store_true',
                        help='Skip Step 1 (ensemble download) and load existing icechunk store. Useful for retrying climatology/quintile calculation.')
-    parser.add_argument('--output-dir', default='./',
-                       help='Output directory for quintile file')
-    parser.add_argument('--clim-dir', default='./',
-                       help='Directory containing climatology files')
+    parser.add_argument('--work-dir', default='./',
+                       help='Home directory for ALL per-cycle artifacts (quintile file, '
+                            'climatology, temp icechunk store). --output-dir/--clim-dir '
+                            'override individually; both default to --work-dir. Default: ./')
+    parser.add_argument('--output-dir', default=None,
+                       help='Output directory for quintile file (default: --work-dir)')
+    parser.add_argument('--clim-dir', default=None,
+                       help='Directory for climatology files (default: --work-dir)')
     parser.add_argument('--local-nc-dir', default=None,
                        help='Read the per-member 1.5deg NetCDFs from this local directory '
                             'instead of GCS (pairs with Step 3a --no-upload --output-dir). '
@@ -931,10 +937,22 @@ Examples:
         print("⏭️  Skipping Step 1 (ensemble download) - will load existing icechunk store")
     print()
 
+    # One --work-dir to home all per-cycle artifacts (quintile file, climatology, temp
+    # icechunk store). --output-dir / --clim-dir override individually; all default to
+    # --work-dir, which itself defaults to "./" (backward compatible).
+    work_dir = args.work_dir
+    out_dir = args.output_dir if args.output_dir is not None else work_dir
+    clim_dir = args.clim_dir if args.clim_dir is not None else work_dir
+    icechunk_store_path = os.path.join(work_dir, "ensemble_icechunk_store")
+    os.makedirs(work_dir, exist_ok=True)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    if clim_dir:
+        os.makedirs(clim_dir, exist_ok=True)
+
     # Step 1: Download ensemble NetCDF files or load existing store
     if args.skip_ensemble:
         print("📂 Step 1: Loading existing ensemble forecast from icechunk store...")
-        icechunk_store_path = "./ensemble_icechunk_store"
         try:
             fds = load_existing_icechunk_store(icechunk_store_path)
         except (FileNotFoundError, RuntimeError) as e:
@@ -958,7 +976,8 @@ Examples:
             fp16=args.fp16,
             v2=args.v2,
             local_only=bool(args.local_nc_dir),
-            local_dir=args.local_nc_dir or "./ensemble_nc_files"
+            local_dir=args.local_nc_dir or os.path.join(work_dir, "ensemble_nc_files"),
+            icechunk_store_path=icechunk_store_path,
         )
 
     if fds is None:
@@ -975,14 +994,14 @@ Examples:
     print(f"   Valid dates: {fc_valid_date1}, {fc_valid_date2}")
 
     if AIWQ_AVAILABLE:
-        download_all_quintiles(forecast_date, clim_dir=args.clim_dir)
+        download_all_quintiles(forecast_date, clim_dir=clim_dir)
     else:
         print("   Warning: AI_WQ_package not available, using local climatology files")
     print()
 
     # Step 3: Calculate quintiles
     print("🔢 Step 3: Calculating quintile probabilities...")
-    quintile_ds = calculate_ensemble_quintiles(fds, forecast_date, args.clim_dir)
+    quintile_ds = calculate_ensemble_quintiles(fds, forecast_date, clim_dir)
 
     if quintile_ds is None:
         print("❌ Failed to calculate quintiles")
@@ -994,13 +1013,13 @@ Examples:
     # Step 4: Save results
     print("\n💾 Step 4: Saving results...")
     if args.v2:
-        output_file = os.path.join(args.output_dir,
+        output_file = os.path.join(out_dir,
                                    f'ensemble_quintile_probabilities_{forecast_date}_v2.nc')
     elif args.fp16:
-        output_file = os.path.join(args.output_dir,
+        output_file = os.path.join(out_dir,
                                    f'ensemble_quintile_probabilities_{forecast_date}_fp16.nc')
     else:
-        output_file = os.path.join(args.output_dir,
+        output_file = os.path.join(out_dir,
                                    f'ensemble_quintile_probabilities_{forecast_date}.nc')
 
     quintile_ds.to_netcdf(output_file)

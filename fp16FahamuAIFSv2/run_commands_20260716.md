@@ -90,12 +90,16 @@ $PY ../shared/aifs_n320_grib_1p5defg_nc_cli.py \
     --source icechunk --icechunk-store $BASE/icechunk_v2 \
     --icechunk-tag cycle-20260716_0000 --output-dir $BASE/nc_1p5deg
 
-# 3b — quintiles (run from fp16FahamuAIFSv2/ so .env resolves -> AIWQ_PASSWORD)
+# 3b — quintiles. --work-dir homes ALL per-cycle artifacts under $BASE/aiwq (quintile
+# file + climatology + temp store), NOT the repo folder. Still run from fp16FahamuAIFSv2/
+# so .env resolves -> AIWQ_PASSWORD.
 $PY ../shared/ensemble_quintile_analysis_cli.py \
-    --date 20260716 --v2 --local-nc-dir $BASE/nc_1p5deg
+    --date 20260716 --v2 --local-nc-dir $BASE/nc_1p5deg --work-dir $BASE/aiwq
 
-# 3c — submit (dry-run first). Window is start_date -> +3 days (20260716-20260719).
-$PY ../shared/forecast_submission_cli.py --date 20260716 --v2 --dry-run   # then drop --dry-run to submit
+# 3c — submit (dry-run first). --output-dir points at the same folder for the quintile file.
+# Window is start_date -> +3 days (20260716-20260719).
+$PY ../shared/forecast_submission_cli.py --date 20260716 --v2 \
+    --output-dir $BASE/aiwq --dry-run          # then drop --dry-run to submit
 ```
 
 3a: 50/50 NetCDFs. 3b: `ensemble_quintile_probabilities_20260716_v2.nc`, dims
@@ -103,6 +107,13 @@ $PY ../shared/forecast_submission_cli.py --date 20260716 --v2 --dry-run   # then
 summing to 1** across the 5 bins. 3b's climatology FTP fetch (valid dates 20260803, 20260810)
 needs `AIWQ_PASSWORD` from `.env`; both CLIs now resolve `.env` from the working directory
 (`find_dotenv(usecwd=True)`). 3c dry-run: **6/6**, Team `Fahamu`, Model `fp16FahamuAIFSv2`.
+
+> **`--work-dir` (new).** `ensemble_quintile_analysis_cli.py` used to scatter its outputs
+> (quintile `.nc`, 6 climatology `.nc`, ~1.6 GB temp `ensemble_icechunk_store/`) into the
+> current directory. `--work-dir DIR` homes all three under `DIR`; `--output-dir`/`--clim-dir`
+> still override individually and everything defaults to `--work-dir` (which defaults to `./`,
+> so old behaviour is unchanged). Point `3b --work-dir` and `3c --output-dir` at `$BASE/aiwq`
+> to keep the whole cycle's artifacts in one place next to `icechunk_v2/`.
 
 ---
 
@@ -121,4 +132,5 @@ needs `AIWQ_PASSWORD` from `.env`; both CLIs now resolve `.env` from the working
 | `/tank/projects/aifs-run/20260716_0000/input_states/` | 48 GB | 50 input pkls |
 | `/tank/projects/aifs-run/20260716_0000/icechunk_v2/` | 584 GB | Icechunk store, tag `cycle-20260716_0000` |
 | `/tank/projects/aifs-run/20260716_0000/nc_1p5deg/` | 9.8 GB | 50 × 1.5° NetCDF (432–792 h) |
-| `fp16FahamuAIFSv2/ensemble_quintile_probabilities_20260716_v2.nc` | 6.7 MB | **submission file** |
+| `/tank/projects/aifs-run/20260716_0000/aiwq/` | ~1.6 GB | AI-WQ artifacts (via `--work-dir`): 6 climatology `.nc`, temp store, and ↓ |
+| `…/aiwq/ensemble_quintile_probabilities_20260716_v2.nc` | 6.7 MB | **submission file** (3c reads it via `--output-dir …/aiwq`) |
