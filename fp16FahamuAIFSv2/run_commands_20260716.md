@@ -120,7 +120,8 @@ needs `AIWQ_PASSWORD` from `.env`; both CLIs now resolve `.env` from the working
 ## Status
 
 - **Steps 1 → 3b: ✅ complete and verified.** Submission-ready file:
-  `fp16FahamuAIFSv2/ensemble_quintile_probabilities_20260716_v2.nc`.
+  `/tank/projects/aifs-run/20260716_0000/aiwq/ensemble_quintile_probabilities_20260716_v2.nc`
+  (relocated from the repo folder via `--work-dir`).
 - **3c: dry-run only (6/6).** The live submission is a separate, explicit step (outward/irreversible);
   run `forecast_submission_cli.py --date 20260716 --v2` (no `--dry-run`), launched **detached**, then
   verify server-side that the 6 files land under `ftp.ecmwf.int:/forecast_submissions/20260716/`.
