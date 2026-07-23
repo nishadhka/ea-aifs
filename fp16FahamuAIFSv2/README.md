@@ -100,6 +100,27 @@ python fp16FahamuAIFSv2/fp16_automate_aifs_gpu_pipeline_v2.py \
   > then re-run. To stop a run cleanly use Ctrl-C (SIGINT), not Ctrl-Z. The first `ekr.interpolate`
   > call also does a one-time N320 matrix download (tens of seconds) — that's normal, not a hang.
 
+  > **AWS S3 `503 Slow Down` can stall input prep for hours — restart it, don't wait.**
+  > The mirror is hardcoded to AWS S3. S3 occasionally throttles the pressure-level burst
+  > (14 levels × 6 params × 2 timesteps) with its `SlowDown` code, and `multiurl` then retries
+  > **500 times at 120 s** — ~16 h of zero progress. Seen 2026-07-23: 1 h 40 m, **0 pkls**, log
+  > repeating `Recovering from HTTP error [503 Slow Down], attempt N of 500`.
+  > It is **not** an outage — plain requests to
+  > `ecmwf-forecasts.s3.eu-central-1.amazonaws.com` returned 200 in <1 s throughout; the
+  > process had just wedged itself in a retry loop.
+  > **Fix:** `pkill -f ecmwf_opendata_pkl_input_aifsens_v2`, then re-run. earthkit's cache keeps
+  > the already-downloaded fields, so the in-flight member finishes in seconds.
+  > **Detect it:** pkl count stops rising while `503 Slow Down` repeats in the log.
+  > (Mirror health check, if ever needed: `google` and `ecmwf` were both healthy; **`azure` is
+  > broken — HTTP 409**. There is no `--source` flag; `create_input_state(..., source=)` still
+  > takes one in code.)
+
+  > **Cleanup between cycles.** A finished cycle costs ~630 GB
+  > (`icechunk_v2` ~584 GB + `input_states` ~48 GB + `nc_1p5deg` ~2 GB). Reclaim it with
+  > `python cleanup_aifs_run.py` (dry-run) → `--yes`. It keeps `aiwq/*.nc` (the quintile +
+  > climatology files), protects the newest `--keep-latest` cycles, and refuses to touch a
+  > cycle a running process is using.
+
   > **Why this matters:** the quintile CLI (3b) needs `AI_WQ_package` to fetch the 20-yr
   > quintile **climatology** from the AI-WQ server. It logs in as
   > `ftplib.FTP('ftp.ecmwf.int', 'ai_weather_quest', password)` — so it **does need
