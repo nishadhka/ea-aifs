@@ -87,8 +87,15 @@ def valid_dates(forecast_date: str):
     return fc_valid_date1, fc_valid_date2
 
 
-def get_quintile_clim(forecast_date: str, variable: str, password: Optional[str] = None, max_retries: int = 5):
-    """Retrieve quintile climatology with robust retry logic."""
+def get_quintile_clim(forecast_date: str, variable: str, password: Optional[str] = None,
+                      max_retries: int = 5, dest: Optional[str] = None):
+    """Retrieve quintile climatology with robust retry logic.
+
+    ``dest`` is the directory to download into (passed to AI_WQ's
+    ``local_destination``). If None, AI_WQ writes to the CWD -- which, with 3b run
+    under ``--clim-dir``/``--work-dir``, put the files where the calc step could not
+    find them. Always pass ``dest=clim_dir``.
+    """
     if not AIWQ_AVAILABLE:
         raise RuntimeError("AI_WQ_package is required for climatology retrieval")
 
@@ -96,6 +103,8 @@ def get_quintile_clim(forecast_date: str, variable: str, password: Optional[str]
         password = os.getenv('AIWQ_PASSWORD') or os.getenv('AIWQ_SUBMIT_PWD')
 
     fc_valid_date1, fc_valid_date2 = valid_dates(forecast_date)
+    if dest:
+        os.makedirs(dest, exist_ok=True)
 
     import time
 
@@ -105,8 +114,10 @@ def get_quintile_clim(forecast_date: str, variable: str, password: Optional[str]
             if attempt == 0:
                 time.sleep(2)
 
+            # local_destination is a DIRECTORY -> AI_WQ writes {dest}/{var}_...nc
             return retrieve_evaluation_data.retrieve_20yr_quintile_clim(
-                date_str, var, password=password
+                date_str, var, password=password,
+                local_destination=(dest.rstrip('/') if dest else None)
             )
         except Exception as e:
             if attempt < max_retries - 1:
@@ -184,7 +195,7 @@ def download_all_quintiles(forecast_date: str, variables: Optional[List[str]] = 
     for variable in variables:
         print(f"Downloading quintile climatology for {variable}...")
         try:
-            clim1, clim2 = get_quintile_clim(forecast_date, variable, password)
+            clim1, clim2 = get_quintile_clim(forecast_date, variable, password, dest=clim_dir)
             quintile_data[variable] = {
                 fc_valid_date1: clim1,
                 fc_valid_date2: clim2
