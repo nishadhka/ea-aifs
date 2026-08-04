@@ -50,8 +50,8 @@ Install the required environment using micromamba:
 micromamba create -n aifs-etl -c conda-forge python=3.12.7 \
   && eval "$(micromamba shell hook --shell bash)" \
   && micromamba activate aifs-etl \
-  && micromamba install -c conda-forge earthkit-data<1.0.0 ecmwf-opendata \
-  && pip install gcsfs s3fs earthkit-regrid=0.5.1 google-cloud-storage icechunk AI_WQ_package \
+  && micromamba install -c conda-forge "earthkit-data<1.0.0" ecmwf-opendata \
+  && pip install gcsfs s3fs earthkit-regrid==0.5.1 google-cloud-storage icechunk AI_WQ_package \
   && sudo apt update && sudo apt install nano
 ```
 
