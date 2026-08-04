@@ -1,0 +1,72 @@
+# Discretization registry — Phase 0 contract (CPT_BUILD_CRITIQUE_AND_PLAN.md §Phase 0).
+#
+# Every locus's state definition lives here with a versioned ID. CPT artifacts MUST
+# reference the ID(s) they used. Changing ANY field (threshold, baseline, pooling region,
+# level, window) means minting a NEW id — counts never pool across ids (kills failure C2/C3:
+# state-definition drift and threshold re-tuning). This file is versioned in git; the id is
+# the contract between a stored count tensor and the meaning of its axes.
+#
+# grade: evidence grade from epistemic-reasoning-summary.md (A hard-relative/no-baseline,
+#        C needs-baseline, etc.). baseline: what the state is measured against.
+
+registry_version: "0.1.0"
+
+# --- Lead windows (Part 0 rule B1: every CPT carries exactly one) -------------------------
+# Stored steps are hours 432..792 (days 18..33), 6-hourly. AI-WQ-aligned weekly windows.
+lead_windows:
+  W1_wk3:   { id: "lw.W1.v1", hours: [432, 576], note: "AI-WQ week 1, days 18-24" }
+  W2_wk45:  { id: "lw.W2.v1", hours: [582, 792], note: "AI-WQ week 2 + tail, days 25-33" }
+
+# --- Pooling region -----------------------------------------------------------------------
+regions:
+  IGAD_EA:
+    id: "reg.IGAD.v1"
+    lat: [-12.0, 18.0]
+    lon: [22.0, 52.0]
+    note: "Greater Horn / IGAD box on native N320 cells; pool-THEN-classify (B4)."
+
+# --- Loci (forecast-side, Phase 1: grade-A no-baseline paths) ------------------------------
+loci:
+
+  z500_regime:
+    id: "loc.z500regime.v1"
+    grade: "A"
+    role: "synoptic-state parent (H-proxy for THIS cycle)"
+    field: "z_500"
+    baseline: "ensemble-mean-of-this-cycle (relative anomaly; NOT a climatology)"
+    method: "window-mean per member -> anomaly from 50-member mean over reg.IGAD.v1 ->
+             standardize -> k-means (scipy kmeans2) into K clusters"
+    k_regimes: 4
+    states: "regime_0 .. regime_{K-1} (labels are per-cycle; not comparable across cycles)"
+    derivation_fields: ["z_500"]
+
+  ivt_moisture:
+    id: "loc.ivt.v1"
+    grade: "A"
+    role: "moisture-supply child (single representative of the moisture cluster, A5)"
+    method: "IVT = (1/g) * vertical integral of q*(u,v) over shared levels; |IVT|;
+             window-mean, region-mean per member"
+    levels: [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000]
+    baseline: "ensemble-median-of-this-cycle (binary: high/low relative to 50-member median)"
+    states: ["ivt_low", "ivt_high"]
+    derivation_fields: ["q_*", "u_*", "v_*"]
+    excludes: "tcw, moisture-flux-convergence, tp — same q,u,v source (A5 derivation-independence)"
+
+  somali_jet:
+    id: "loc.somalijet.v1"
+    grade: "A-relative"
+    role: "diagnostic index (labelled RELATIVE until a baseline exists)"
+    method: "850 hPa cross-equatorial southerly index: mean v_850 over 40-55E, 5S-5N,
+             window-mean per member"
+    baseline: "ensemble-median-of-this-cycle (binary)"
+    states: ["jet_weak", "jet_strong"]
+    derivation_fields: ["v_850"]
+
+# --- Observation-side loci (Phase 2/3 — NOT YET IMPLEMENTED; placeholders) -----------------
+# tp as a CHIRPS-climatology tercile (retires within-ensemble tercile, A3/R2) and the R1
+# antecedent-percentile node require the CHIRPS ingest (Phase 2). Reserved ids so nothing
+# silently reuses them:
+reserved_obs_loci:
+  tp_chirps_tercile:   { id: "loc.tpCHIRPS.v1", status: "reserved (Phase 2)" }
+  antecedent_r1:       { id: "loc.antecedentR1.v1", status: "reserved (Phase 2)" }
+  sst_boundary:        { id: "loc.sstOISST.v1", status: "reserved (Phase 2, A4: observed SST at init)" }
