@@ -1,0 +1,79 @@
+# Epistemic reasoning & risk from the AIFS-ENS Icechunk store
+
+Turning a per-cycle AIFS-ENS-2.0 forecast into an **auditable, calibrated belief** about
+hazard-relevant weather over East Africa at the S2S range (days 18–33) — not a skill score.
+
+The premise (from an MLWP-acceptance argument): the operational value of ML weather prediction
+cannot be judged by verification skill alone; acceptance depends on **understanding, translating
+and communicating**. The per-cycle Icechunk store (120 variables, 50 members, native N320) is
+the substrate that makes those functions possible — the `tp/msl/2t` quintile submission
+discards everything else. This folder builds the reasoning layer on top of it.
+
+## The arc (why the files exist, in order)
+
+1. **`../ICECHUNK_S2S_DIAGNOSTICS.md`** — *understand.* What the store lets a forecaster
+   diagnose that the submission throws away: IVT/atmospheric rivers, ENSO/IOD fingerprints,
+   MJO, Somali jet, weather regimes. Grounded in the verified variable set.
+2. **`epistemic-reasoning-summary.md`** + **`main.tex`** — *the framework.* Evidence grades
+   (A–D, hard/soft/virtual), routes for building conditional probability tables (CPTs) from the
+   store and observations, and the risk-communication seam (CRMA grades).
+3. **`CPT_BUILD_CRITIQUE_AND_PLAN.md`** — *the critical turn.* A hard critique of (1)+(2) —
+   pseudo-replication, backwards network arrows, unverified `tp`, mis-typed SST nodes,
+   over-sold convergence — and a corrected, phased build plan (Part 0 scale×lead, Phases 0–5).
+4. **Phase-0/1 implementation** (below) — *the corrected code*, run on a real cycle.
+
+## Phase-0 contracts (fix the failure modes before any counting)
+
+| File | Fixes | Content |
+|---|---|---|
+| `NETWORK_DIRECTION.md` | **A2** | Generative structure: latent hazard state `H`, evidence as **children** `P(E\|H)`, posterior ∝ prior · ∏ likelihoods. Not the discriminative `P(outcome\|forecast×station)` that needs an unfillable joint. |
+| `discretization_registry.yaml` | **C2/C3** | Versioned locus / state / lead-window / region IDs. Change a definition → new id; counts never pool across ids (kills state-definition drift and threshold re-tuning). |
+
+## Phase-1 implementation
+
+- **`cpt_build.py`** — the corrected Route-A counter. Every critique point enforced in code:
+  **A1** one modal state per member per lead window → `n ≤ 50` (not 50×61);
+  **A3** `verify_tp_interval()` asserts before any rainfall locus;
+  **A5** IVT is the sole moisture representative (no `tcw`/mfc/`tp` double-count);
+  **B1** two AI-WQ-aligned lead windows; **B3** ESS = participation ratio of the ensemble-spread
+  spectrum, counts down-weighted to ESS, raw counts always kept; **Part 0** region-pooled before
+  classification, no grid-cell node.
+- **`cpt_artifact_20260730.nc`** — the artifact of record (**B7** schema): raw `counts`,
+  `counts_eff`, `posterior`, `regime_occupancy`, `ess`, `alpha0`, and full provenance
+  (source tag, registry version, locus IDs, grades, lead hours, `tp` semantics).
+- **`IMPLEMENTATION.md`** — how each critique item is discharged, with the run command.
+
+```bash
+python cpt_build.py \
+  --store /tank/projects/aifs-run/20260730_0000/icechunk_v2 \
+  --tag cycle-20260730_0000 --out cpt_artifact_20260730.nc
+```
+
+## Initial results (cycle `cycle-20260730_0000`, IGAD box, 11 342 N320 cells)
+
+- **`tp` is interval, not accumulated** (31.7 % of cells decrease step-to-step) → no
+  de-accumulation; the critique's A3 gate is closed for this store.
+- **Ensemble spread is low-dimensional:** ESS ≈ **1.8–1.9** (redundancy ≈ 0.96) in *both* lead
+  windows — the 50-member `z500` spread over East Africa at days 18–33 collapses onto **~2
+  effective spatial degrees of freedom**. This is itself an *understanding* diagnostic.
+- **A regime→moisture hint that the framework correctly refuses to trust yet.** Raw counts
+  (regime × [ivt_low, ivt_high]) for week-3 = `[[9,6],[2,6],[10,6],[4,7]]` — regime 1 is 6/8
+  moist, regime 0 is 9/15 dry. But with ESS≈2, the ESS-discounted `P(IVT_high | regime)` stays
+  wide (**0.45–0.60**): one low-DOF forecast cannot establish the conditional. The raw counts
+  are retained so the pattern can be tested against future cycles (Phase 3).
+
+That refusal is the whole point: **the code will not turn a single low-DOF forecast into a
+confident belief at a scale where belief is not yet justified** — the acceptance criterion the
+opening argument actually proposes.
+
+## Not built (honest scope)
+
+Forecast-side only. Reserved in the registry, needing external data or many cycles:
+**Phase 2** observation pipeline (CHIRPS/IMERG antecedent node, OISST boundary node),
+**Phase 3** matched forecast/obs archive → the real `P(E|H)` (the artifact's `n_cycles=1`
+makes this gap explicit), **Phase 5** null-model skill harness + the L4 elicitation seam.
+
+---
+
+*`*.txt` are exported session transcripts (run archives). Grounded in the verified 20260730
+store: 120 vars, 50 members, N320, hours 432–792.*
