@@ -133,7 +133,7 @@ store, lower network elicited — the seam the plan insisted must never be silen
 
 | Node | qd-1 asks for | Store fields used (all verified present) | Diagnostic | State thresholds (absolute) | Grade |
 |---|---|---|---|---|---|
-| **C** circulation regime | `msl`, `z500`, `u850/v850` grouped into one regime | `z_500`, `msl`, `v_850` | window-mean `z_500` anomaly from the 50-member mean → whiten → k-means K=4; clusters **ordered** by a circulation-only index `z(−msl_anom) + z(v_850)` | unfavourable / neutral / convergent / strongly_convergent | A-relative |
+| **C** circulation regime | `msl`, `z500`, `u850/v850` grouped into one regime | `z_500`, `msl`, `v_850` | window-mean `z_500` anomaly from the 50-member mean → whiten → k-means **K = 2** (tested, see below); clusters **ordered** by a circulation-only index `z(−msl_anom) + z(v_850)` | **unfavourable / convergent** | A-relative |
 | **M** moisture transport | `tcwv`, `q850/q700`, winds → IVT or MFT | `q_*`, `u_*`, `v_*` (13 shared levels) | full `|IVT| = |(1/g)∫q·V dp|`, region-mean, window-mean per member; **persistence** = step fraction above the *enhanced* threshold | cuts at **150 / 250 / 350** kg m⁻¹ s⁻¹ (0.6×/1.0×/1.4× the AR criterion) | A |
 | **R** rainfall environment | `cape`, `t850/t500`, `q700/r700`, `w500/w700` | `w_500`, `w_700`, `t_850`, `t_500`, `q_700`, `t_700` | **no CAPE**: `ascent/0.01 + (lapse−26)/3 + (rh700−0.50)/0.15`, RH via Tetens | index cuts at **−1.0 / 0.5 / 2.0** | A |
 | **P** precipitation forcing | `tp` + rolling accumulations, persistence, exceedance | `tp` (interval, m → mm) | rate = total/window-days; peak rolling 24 h; wet-step fraction | **1.0 / 4.0 mm day⁻¹**, heavy split by `peak24/total > 0.5` | A |
@@ -173,6 +173,18 @@ reported as such rather than rescued by re-tuning the threshold to split the sam
 
 Every locus is **region-pooled before classification** (Part-0 admissibility): there is no
 grid-cell node anywhere, because a single N320 cell at day 25 carries no predictability.
+
+### The circulation node uses k = 2, and that was tested rather than chosen
+
+`k_regimes_test.py` clusters two independent 80 % member subsamples per *k* and compares them
+with the Adjusted Rand Index (chance-corrected). Over 3 regions × 2 lead windows: **k = 2 is
+stable (ARI 0.82); k = 4 is not (0.56)**, silhouette falls monotonically with *k*, and PC1 alone
+holds 72–88 % of the ensemble variance. The original k = 4 was partitioning ~1 dominant
+direction into four regimes. Production is now `loc.circ.v2` (k = 2); counts never pool across
+the superseded `loc.circ.v1`. Artifact: `k_regimes_test_20260730.json`.
+
+The general lesson, which applies to the rest of the diagnostics: **any scheme that slices 50
+low-DOF members into many categories should be assumed guilty until stability-tested.**
 
 ### The antecedent gap — the one structural problem neither document solves
 

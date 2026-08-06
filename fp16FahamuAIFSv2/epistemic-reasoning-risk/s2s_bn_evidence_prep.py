@@ -86,7 +86,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 # Node state vocabularies — MUST match s2s_water_balance_bn.jl and the registry.
 STATES = {
-    "C":  ["unfavourable", "neutral", "convergent", "strongly_convergent"],
+    # k=2, NOT k=4. The k-regimes test (k_regimes_test.py, artifact
+    # k_regimes_test_20260730.json) showed k=4 clustering is UNSTABLE on this spread
+    # (subsample ARI 0.557, silhouette 0.24) while k=2 is stable (ARI 0.817). PC1 alone
+    # carries 72-88% of the ensemble variance. Four regimes were manufacturing structure
+    # from ~1 dominant direction; the ensemble carries two circulation stories, not four.
+    "C":  ["unfavourable", "convergent"],
     "M":  ["deficient", "normal", "enhanced", "extreme_persistent"],
     "R":  ["suppressed", "weakly_supportive", "supportive", "strongly_supportive"],
     "P":  ["below_normal", "normal", "heavy_episodic", "heavy_persistent"],
@@ -197,7 +202,7 @@ def _region_window_mean(ds, var, steps, cells):
     return np.nanmean(_region_step_mean(ds, var, steps, cells), axis=1)
 
 
-def circulation(ds, steps, cells, k=4, seed=1234):
+def circulation(ds, steps, cells, k=2, seed=1234):
     """C: k-means on the z500 anomaly PATTERN, clusters ordered by a circulation-only index.
 
     The ordering index deliberately excludes humidity so that C stays independent of M's
@@ -377,15 +382,16 @@ def narrate(unit_name, hours, n, ess, C, ivt_win, persistence, r_idx, rate, jet)
 
     Deliberately plain and quantitative — this is the 'translate/communicate' step the MLWP
     acceptance argument asks for, and every clause is traceable to a locus in the registry."""
-    k_top = int(np.argmax(np.bincount(C, minlength=4)))
-    n_top = int(np.bincount(C, minlength=4)[k_top])
+    kC = len(STATES["C"])
+    k_top = int(np.argmax(np.bincount(C, minlength=kC)))
+    n_top = int(np.bincount(C, minlength=kC)[k_top])
     n_ar = int((ivt_win > THRESH["ivt"][1]).sum())
     n_supp = int((r_idx > THRESH["rgen"][1]).sum())
     n_heavy = int((rate >= THRESH["tp_rate"][1]).sum())
     n_jet = int((jet > 0).sum()) if jet is not None else None
     s = (f"{unit_name}, hours {hours[0]}-{hours[1]}: "
          f"{n_top} of {n} members place the circulation in regime {k_top} "
-         f"({['unfavourable','neutral','convergent','strongly convergent'][k_top]}); "
+         f"({STATES['C'][k_top].replace('_', ' ')}); "
          f"region-mean |IVT| {ivt_win.min():.0f}-{ivt_win.max():.0f} kg/m/s with "
          f"{n_ar} of {n} above the 250 corridor threshold "
          f"(mean duration above it {persistence.mean()*100:.0f}% of steps); "
@@ -432,6 +438,10 @@ def main():
                     help="PRIMARY: JSON circulation explanation record")
     ap.add_argument("--regions", default="IGAD_EA",
                     help="comma-separated registry region keys, or 'all'")
+    ap.add_argument("--k-regimes", type=int, default=2,
+                    help="circulation clusters. Default 2: k_regimes_test.py found k>=3 "
+                         "UNSTABLE on this spread (ARI 0.56 at k=4 vs 0.82 at k=2). Any other "
+                         "value is experimental and outside the registry contract.")
     ap.add_argument("--out", default=None, help="downstream BN evidence CSV")
     ap.add_argument("--member-out", default=None, help="per-member storyline sidecar CSV")
     ap.add_argument("--cpt-out", default=None, help="counted process CPT artifact (netCDF)")
@@ -445,6 +455,12 @@ def main():
     args = ap.parse_args()
 
     reg = load_registry()
+    kC = args.k_regimes
+    if kC != len(STATES["C"]):
+        print(f"[warn] --k-regimes={kC} is outside the registry contract (k=2, "
+              f"loc.circ.v2); using generic labels. See k_regimes_test.py.")
+        STATES["C"] = [f"regime_{i}" for i in range(kC)]
+
     repo, ds = open_cycle(args.store, args.tag)
     lat, lon = ds["latitude"].values, ds["longitude"].values
     n_mem = ds.sizes["member"]
@@ -502,7 +518,7 @@ def main():
             if lcells.sum() < args.min_cells:      # land nodes need land
                 lcells = cells
 
-            C, z_anom, circ_idx = circulation(ds, steps, cells)
+            C, z_anom, circ_idx = circulation(ds, steps, cells, k=kC)
             ess, redundancy = ensemble_ess(z_anom)
 
             ivt_step = ivt(ds, steps, cells)                       # (member, step)
@@ -529,10 +545,14 @@ def main():
                 "name": uname, "n_cells": int(cells.sum()),
                 "n_land_cells": int(lcells.sum()), "n_members": n_mem,
                 "ess": round(float(ess), 2), "redundancy": round(float(redundancy), 3),
-                "regime_occupancy": np.bincount(C, minlength=4).tolist(),
+                "regime_states": STATES["C"],
+                "regime_occupancy": np.bincount(C, minlength=kC).tolist(),
                 "regime_circulation_index": [
                     round(float(circ_idx[C == k].mean()), 3) if (C == k).any() else None
-                    for k in range(4)],
+                    for k in range(kC)],
+                "k_regimes": kC,
+                "k_justification": "k=2: subsample-ARI 0.82 vs 0.56 at k=4 "
+                                   "(k_regimes_test.py); PC1 holds 72-88% of the variance",
                 "ivt_kg_m_s": {**dist(ivt_win),
                                "n_above_250": int((ivt_win > THRESH["ivt"][1]).sum()),
                                "n_above_350": int((ivt_win > THRESH["ivt"][2]).sum()),
@@ -596,7 +616,7 @@ def main():
                     })
 
             if args.cpt_out or args.cpt_json:
-                cm_c, cm_p = counted_cpt(C, M, 4, 4, ess, n_mem)
+                cm_c, cm_p = counted_cpt(C, M, kC, 4, ess, n_mem)
                 mr_c, mr_p = counted_cpt(M, R, 4, 4, ess, n_mem)
                 mp_c, mp_p = counted_cpt(M, P, 4, 4, ess, n_mem)
                 rp_c, rp_p = counted_cpt(R, P, 4, 4, ess, n_mem)
@@ -630,12 +650,15 @@ def main():
         pack = lambda k: np.stack([b[k] for b in cpt_blocks])
         out = xr.Dataset(
             {name: (("block", "parent", "child"), pack(name)) for name in
-             ["CM_counts", "CM_post", "MR_counts", "MR_post",
-              "MP_counts", "MP_post", "RP_counts", "RP_post"]},
+             ["MR_counts", "MR_post", "MP_counts", "MP_post", "RP_counts", "RP_post"]},
             coords={"block": [f"{u}|{w}" for u, w in keys],
                     "parent": [f"s{i+1}" for i in range(4)],
-                    "child": [f"s{i+1}" for i in range(4)]},
+                    "child": [f"s{i+1}" for i in range(4)],
+                    "c_state": STATES["C"]},
         )
+        # C has kC states (2), the rest have 4 — separate dims rather than padding
+        out["CM_counts"] = (("block", "c_state", "child"), pack("CM_counts"))
+        out["CM_post"] = (("block", "c_state", "child"), pack("CM_post"))
         out["ess"] = ("block", np.array([b["ess"] for b in cpt_blocks]))
         out.attrs.update({
             "title": "Process-chain CPTs counted from the JOINT 50-member sample (one state "
@@ -647,6 +670,9 @@ def main():
             "registry_version": reg["registry_version"],
             "loci": ",".join(reg["process_loci"][k]["id"] for k in reg["process_loci"]),
             "counting_rule": "one state per member per lead window; count over member dim (A1)",
+            "k_regimes": kC,
+            "k_justification": "k=2 selected by k_regimes_test.py: subsample-ARI 0.82 (stable) "
+                               "vs 0.56 at k=4 (unstable); PC1 holds 72-88% of ensemble variance",
             "ess_rule": "participation ratio of the member covariance eigenspectrum; counts "
                         "down-weighted to ESS; raw counts retained (B3/B7)",
             "grid": "native N320 reduced Gaussian, quasi-equal-area cells; unweighted cell mean",
@@ -666,6 +692,7 @@ def main():
                 "n_cycles": 1,
                 "typing": "within-cycle joint member counts — NOT a P(E|H) calibration",
                 "counting_rule": "one state per member per lead window (A1)",
+                "k_regimes": kC, "c_states": STATES["C"],
             },
             "blocks": {
                 f"{b['unit_id']}|{b['lead_window']}": {

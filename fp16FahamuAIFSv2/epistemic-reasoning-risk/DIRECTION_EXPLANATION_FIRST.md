@@ -104,14 +104,41 @@ Stated up front, so the pivot is falsifiable rather than a preference:
    an academic artefact and risk framing was right.
 2. **ERA5 verification shows the regime assignment is unstable** — if the same cycle's regimes
    don't correspond to anything verifiable, the narrative is confident noise.
-3. **ESS ≈ 1.85 undercuts the explanation product too.** This is the sharpest one, and it cuts
-   against us: with ~2 effective degrees of freedom, partitioning into **k = 4** regimes is
-   probably over-partitioning, and the regime occupancy counts may be an artefact of k-means on
-   a rank-2 spread. **Concrete test: rerun at k = 2 and check whether the occupancy structure
-   and the narrative survive.** If they don't, the honest product is much thinner than E1
-   currently implies — closer to "the ensemble carries two circulation stories this cycle".
+3. **ESS ≈ 1.85 undercuts the explanation product too.** ✅ **TESTED — AND IT FIRED. See below.**
 
-Item 3 should be run before E2 is started.
+### Falsifier 3 was run, and it went against us
+
+`k_regimes_test.py` (artifact `k_regimes_test_20260730.json`) clusters two independent 80 %
+member subsamples per *k* and compares their labels on the intersection with the Adjusted Rand
+Index — chance-corrected, so no null model is required. Six cases (3 regions × 2 lead windows):
+
+| k | mean subsample ARI | verdict | silhouette |
+|---|---|---|---|
+| **2** | **0.817** | **stable** | 0.43 |
+| 3 | 0.619 | marginal | 0.36 |
+| **4** *(was production)* | **0.557** | **UNSTABLE** | 0.24 |
+| 5 | 0.544 | unstable | 0.26 |
+| 6 | 0.535 | unstable | 0.24 |
+
+PC1 alone carries **72–88 %** of the ensemble variance in every case (ESS 1.3–1.9 of 50). The
+k = 4 partition was manufacturing four regimes out of roughly one dominant direction: re-drawing
+the members reshuffles the labels almost as much as it preserves them.
+
+**Action taken — production moved to k = 2.** `loc.circ.v2` supersedes `loc.circ.v1`; counts
+never pool across the two ids. Python, the Julia BN (`C_STATES`, `P(M|C)` now 4×2, the model's
+`Categorical`/`diageye` arity, the CSV reader and the self-test) and the registry all follow.
+
+**And the honest consequence, exactly as anticipated:** the product is thinner than E1 first
+implied. The defensible statement is *"the ensemble carries two circulation stories this
+cycle, split n/50–m/50"* — not a four-regime occupancy fan. That is a smaller claim, and it is
+the one the data supports. Nothing about the pivot itself is invalidated: the failure was in how
+finely we partitioned, not in whether circulation explanation is the right product. But it is a
+direct warning about the rest of E1 — **any diagnostic that slices 50 low-DOF members into many
+categories should be assumed guilty until stability-tested.**
+
+*(Method note: for `k = 2` the EQ_INDIAN week-4–5 case is the one exception, ARI 0.53 — that
+single case prefers k = 3. One case out of six does not overturn the aggregate, but it is the
+first place to look if the regional records start disagreeing.)*
 
 ---
 

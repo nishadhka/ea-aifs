@@ -20,9 +20,10 @@ broke — we **demoted risk and made circulation explanation the primary product
 Four things most worth a second opinion, in order:
 
 1. **Was the pivot right?** Explanation-first, risk downstream. §4.6 + `DIRECTION_EXPLANATION_FIRST.md`
-2. **Does the explanation product survive its own ESS?** With ESS ≈ 1.85, `k = 4` regimes is
-   probably over-partitioned and the occupancy counts may be a k-means artefact. **This is the
-   sharpest self-criticism and it is not yet tested.** §5.1
+2. ~~Does the explanation product survive its own ESS?~~ **TESTED — it did not, and production
+   changed.** k = 4 clustering is unstable (subsample ARI 0.56); k = 2 is stable (0.82).
+   Production moved to k = 2 across Python, Julia and the registry. Review whether the test
+   itself is sound and whether the *remaining* diagnostics need the same treatment. §5.1
 3. **Is the evidence wiring circular?** The chain CPTs are counted from the same 50 members that
    supply the evidence. We argue it's the correct null; it is the most attackable design call. §4.3
 4. **Are the thresholds defensible?** Every judgement number is in one table. §6
@@ -50,6 +51,7 @@ the generative direction holds (we believe it does: `RO` hangs off `W` as a chil
 | `DIRECTION_EXPLANATION_FIRST.md` | **the scope decision** — read first |
 | `S2S_BN_ONTOLOGY.md` | ontology ↔ verified store variables; carries a scope banner pointing at the direction note |
 | `s2s_bn_evidence_prep.py` | **runs on real data**; primary path is now `--explain-out` |
+| `k_regimes_test.py` + `k_regimes_test_20260730.json` | **runs**; the stability test that moved production from k=4 to k=2 |
 | `s2s_water_balance_bn.jl` | **never executed** (no Julia on this box); re-typed as downstream consumer |
 | `discretization_registry.yaml` | 0.1.0 → 0.2.0: `process_loci`, `blocked_loci`, circulation regions, `explanation_products` |
 | `README.md` | folder arc extended with items 5–7 |
@@ -148,11 +150,20 @@ re-typed as downstream and warns at runtime.
 
 ## 5. Known issues we did not fix — please confirm or dispute
 
-1. **⚠ `k = 4` regimes on a rank-≈2 spread.** ESS ≈ 1.85 means the ensemble spans ~2 effective
-   degrees of freedom, yet we partition into four regimes and report occupancy counts. Those
-   counts may be a k-means artefact, and this now undercuts the *primary* product, not just the
-   risk one. **Untested. The concrete test is to rerun at `k = 2` and see whether the occupancy
-   structure and the narrative survive** — this should happen before any further build.
+1. **✅ RESOLVED — `k = 4` was over-partitioning; production is now `k = 2`.**
+   `k_regimes_test.py` clusters two independent 80 % member subsamples per *k* and compares
+   them on the intersection with the Adjusted Rand Index (chance-corrected, so no null model
+   needed). Mean over 6 cases: **k=2 → 0.817 stable · k=3 → 0.619 marginal · k=4 → 0.557
+   UNSTABLE · k=5 → 0.544 · k=6 → 0.535.** Silhouette falls monotonically 0.43 → 0.22; PC1
+   alone holds 72–88 % of variance. `loc.circ.v2` supersedes `loc.circ.v1`, counts never pool
+   across them, and the Julia BN's `C` arity followed (4 → 2). Artifact:
+   `k_regimes_test_20260730.json`.
+   *Still open for the reviewer:* (a) is the ARI-on-subsamples protocol the right stability
+   test here, or would you prefer a different one; (b) **one case dissents** — EQ_INDIAN week
+   4–5 prefers k = 3 (k=2 ARI 0.53 there); (c) the same guilty-until-tested standard has **not**
+   been applied to the other multi-category diagnostics (M, R, P all have 4 states set by
+   thresholds rather than clustering — thresholds don't have this failure mode, but the
+   *reporting* of 4-way splits on ~2 effective draws deserves the same scepticism).
 2. **`tp` region-meaned over all cells; `ro`/`swvl` over land only.** Inconsistent; dilutes
    precipitation with ocean cells for box units. Moot for admin-1. *We consider this a defect.*
 3. **The antecedent node is not independent of the forecast.** The fallback `A` uses the model's
@@ -192,14 +203,15 @@ lead); the two named non-linearities in `P(W|P,A)` (**−0.45** heavy-rain-on-dr
 **+0.45** persistent-rain-on-wet amplification); the `w_pers` episodic/persistent split; the
 `P(RO|W)` matrix; `cost_loss_ratio = 0.2` (Weingärtner & Wilkinson 2019) in the two-sided CRMA rule.
 
-**Structural:** `k = 4` regimes (see §5.1); lead windows W1 = 432–576 h, W2 = 582–792 h;
+**Structural:** `k = 2` regimes (tested, §5.1); lead windows W1 = 432–576 h, W2 = 582–792 h;
 regions `IGAD_EA` [−12,18]×[22,52], `EQ_INDIAN`, `WIO`, `CONGO` (registry).
 
 ## 7. What is tested, and what is not
 
 **Tested (real data, `cycle-20260730_0000`):** the whole Python path — store open, masks, all
 six diagnostics, Somali-jet index, state assignment, soft evidence, per-member sidecar, counted
-CPTs, netCDF/JSON artifacts, and the explanation record over multiple regions. Sanity checks
+CPTs, netCDF/JSON artifacts, the explanation record over multiple regions, and the k-regimes
+stability test (whose result changed production). Sanity checks
 that passed: counts sum to 50 (one state per member — critique rule A1); C occupancy
 `[8,11,15,16]` matches the reported fractions; ESS 1.85/1.87 reproduces the earlier
 `cpt_build.py` finding; unobserved parent rows fall back to the prior while observed rows carry
@@ -219,7 +231,8 @@ geopandas/regionmask aren't installed) — no admin-1 file was available.
 1. §3 — re-verify the store facts. If the interval semantics or the absent-field list are wrong,
    stop and tell us.
 2. §4.6 — the pivot. Right call, or are we abandoning the actionable product?
-3. §5.1 — the `k = 2` test. Cheap to run, and it can undercut the new primary product.
+3. §5.1 — the k-regimes stability test: is the protocol sound, and should the same standard
+   be applied to the other 4-state diagnostics?
 4. §4.3 — the circularity question.
 5. §5.2–5.4 — the defects we named but did not fix.
 6. §6 — thresholds and elicited scores, ideally by someone with East-African forecasting

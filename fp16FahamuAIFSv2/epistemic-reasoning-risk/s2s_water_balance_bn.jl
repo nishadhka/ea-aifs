@@ -56,7 +56,10 @@ using RxInfer
 # STATE VOCABULARY  (must match STATES in s2s_bn_evidence_prep.py + the registry)
 # ============================================================================
 
-const C_STATES  = ["unfavourable", "neutral", "convergent", "strongly_convergent"]   # 4
+const C_STATES  = ["unfavourable", "convergent"]                                     # 2
+# k=2, NOT k=4: k_regimes_test.py found k>=3 clustering UNSTABLE on this ensemble spread
+# (subsample ARI 0.56 at k=4 vs 0.82 at k=2; PC1 holds 72-88% of the variance). Four
+# regimes were manufacturing structure from ~1 dominant direction.
 const M_STATES  = ["deficient", "normal", "enhanced", "extreme_persistent"]          # 4
 const R_STATES  = ["suppressed", "weakly_supportive", "supportive",
                    "strongly_supportive"]                                            # 4
@@ -98,10 +101,10 @@ P(M | C) — elicited fallback. Overridden by counted tables when --cpt-json is 
 A more convergent circulation raises the moisture-supply state.
 """
 function build_M_given_C(; sigma::Float64=1.0)
-    T = zeros(4, 4)                                   # (M=4, C=4)
-    c_score = [-1.0, -0.2, 0.6, 1.2]
+    T = zeros(4, 2)                                   # (M=4, C=2)
+    c_score = [-0.8, 0.8]                             # unfavourable / convergent
     m_centre = [-1.2, -0.2, 0.7, 1.4]
-    for c in 1:4
+    for c in 1:2
         T[:, c] = ordinal_probs(c_score[c], m_centre, sigma)
     end
     return T
@@ -283,9 +286,9 @@ end
 
 @model function s2s_wbp_model(T_MC, T_RM, T_PMR, T_WPA, T_ROW,
                               c_data, a_data, ro_data, w_data)
-    c  ~ Categorical(fill(1/4, 4))
+    c  ~ Categorical(fill(1/2, 2))
     a  ~ Categorical(fill(1/5, 5))
-    c_data ~ DiscreteTransition(c, diageye(4))
+    c_data ~ DiscreteTransition(c, diageye(2))
     a_data ~ DiscreteTransition(a, diageye(5))
 
     m  ~ DiscreteTransition(c, T_MC)
@@ -299,7 +302,7 @@ end
 end
 
 _wbp_init = @initialization begin
-    q(c)  = Categorical(fill(1/4, 4))
+    q(c)  = Categorical(fill(1/2, 2))
     q(a)  = Categorical(fill(1/5, 5))
     q(m)  = Categorical(fill(1/4, 4))
     q(r)  = Categorical(fill(1/4, 4))
@@ -413,7 +416,7 @@ function run_csv(input_csv::String, output_csv::String;
                counted[blk][:R_given_M] : build_R_given_M()
         T_WPA = build_W_given_PA(; sigma = sigma_for(win))
 
-        c_ev  = something(soft(row, colnames, "C", 4), fill(0.25, 4))
+        c_ev  = something(soft(row, colnames, "C", 2), fill(0.5, 2))
         a_ev  = something(soft(row, colnames, "A", 5), fill(0.2, 5))
         ro_ev = soft(row, colnames, "RO", 4)
         m_ev  = evidence_mode == "all" ? soft(row, colnames, "M", 4) : nothing
@@ -475,7 +478,7 @@ function run_storylines(member_csv::String, storyline_csv::String; cost_loss_rat
         T_WPA = build_W_given_PA(; sigma = sigma_for(win))
         per = NamedTuple[]
         for r in eachrow(g)
-            w, _ = infer_chain(onehot(Int(r.C_idx), 4), onehot(Int(r.A_idx), 5);
+            w, _ = infer_chain(onehot(Int(r.C_idx), 2), onehot(Int(r.A_idx), 5);
                                m_ev = onehot(Int(r.M_idx), 4),
                                r_ev = onehot(Int(r.R_idx), 4),
                                p_ev = onehot(Int(r.P_idx), 4),
@@ -525,18 +528,18 @@ function self_test()
     @assert all(isapprox.(sum(T_WPA, dims=1), 1.0; atol=1e-8)) "W|P,A must normalise"
 
     # 1. Convergent circulation + saturated ground -> surplus-leaning
-    w_wet, _ = infer_chain(onehot(4, 4), onehot(5, 5); T_MC, T_RM, T_PMR, T_WPA, T_ROW)
+    w_wet, _ = infer_chain(onehot(2, 2), onehot(5, 5); T_MC, T_RM, T_PMR, T_WPA, T_ROW)
     # 2. Unfavourable circulation + very dry ground -> deficit-leaning
-    w_dry, _ = infer_chain(onehot(1, 4), onehot(1, 5); T_MC, T_RM, T_PMR, T_WPA, T_ROW)
+    w_dry, _ = infer_chain(onehot(1, 2), onehot(1, 5); T_MC, T_RM, T_PMR, T_WPA, T_ROW)
     @info "wet-case" state=W_STATES[argmax(w_wet)] p_surplus=round(w_wet[4]+w_wet[5], digits=3)
     @info "dry-case" state=W_STATES[argmax(w_dry)] p_deficit=round(w_dry[1]+w_dry[2], digits=3)
     @assert (w_wet[4] + w_wet[5]) > (w_dry[4] + w_dry[5]) "wet case must carry more surplus mass"
     @assert (w_dry[1] + w_dry[2]) > (w_wet[1] + w_wet[2]) "dry case must carry more deficit mass"
 
     # 3. Runoff evidence corroborates but must not dominate (grade B likelihood)
-    w_ro_hi, _ = infer_chain(onehot(3, 4), onehot(3, 5); ro_ev = onehot(4, 4),
+    w_ro_hi, _ = infer_chain(onehot(2, 2), onehot(3, 5); ro_ev = onehot(4, 4),
                              T_MC, T_RM, T_PMR, T_WPA, T_ROW)
-    w_ro_no, _ = infer_chain(onehot(3, 4), onehot(3, 5);
+    w_ro_no, _ = infer_chain(onehot(2, 2), onehot(3, 5);
                              T_MC, T_RM, T_PMR, T_WPA, T_ROW)
     shift = (w_ro_hi[4] + w_ro_hi[5]) - (w_ro_no[4] + w_ro_no[5])
     @info "runoff corroboration shift" shift=round(shift, digits=3)
@@ -544,9 +547,9 @@ function self_test()
     @assert shift < 0.30 "runoff is grade B — it must not dominate the posterior"
 
     # 4. The later window must be less certain than the earlier one
-    w_w1, _ = infer_chain(onehot(4, 4), onehot(5, 5); T_MC, T_RM, T_PMR,
+    w_w1, _ = infer_chain(onehot(2, 2), onehot(5, 5); T_MC, T_RM, T_PMR,
                           T_WPA = build_W_given_PA(sigma = sigma_for("W1_wk3")), T_ROW)
-    w_w2, _ = infer_chain(onehot(4, 4), onehot(5, 5); T_MC, T_RM, T_PMR,
+    w_w2, _ = infer_chain(onehot(2, 2), onehot(5, 5); T_MC, T_RM, T_PMR,
                           T_WPA = build_W_given_PA(sigma = sigma_for("W2_wk45")), T_ROW)
     ent(v) = -sum(p * log(max(p, 1e-12)) for p in v)
     @info "lead-window entropy" w1=round(ent(w_w1), digits=3) w2=round(ent(w_w2), digits=3)

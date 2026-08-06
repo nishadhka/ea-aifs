@@ -86,6 +86,13 @@ opening argument actually proposes.
    vorticity) stop being deferrable and now need a regrid or spherical-harmonic step.
 7. **`HANDOVER.md`** — *for a second opinion.* Decisions with the case against each, every
    judgement number in one table, and what is tested vs unrun.
+8. **`k_regimes_test.py`** — *the falsifier, run.* The handover's own sharpest self-criticism,
+   tested and upheld against us: with ESS ≈ 1.3–1.9 and PC1 holding **72–88 %** of the ensemble
+   variance, `k = 4` circulation clustering is **unstable** (subsample-ARI **0.557**) while
+   `k = 2` is **stable** (**0.817**). Production moved to k = 2 (`loc.circ.v2` supersedes
+   `loc.circ.v1`; counts never pool across them) in Python, in the Julia BN's node arity, and in
+   the registry. The defensible statement is *"the ensemble carries two circulation stories,
+   split 26/24"* — not a four-regime fan. Artifact: `k_regimes_test_20260730.json`.
 
 ```bash
 python s2s_bn_evidence_prep.py \
