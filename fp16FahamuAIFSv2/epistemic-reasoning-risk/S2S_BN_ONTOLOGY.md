@@ -3,6 +3,16 @@
 *`qd-1.md.txt`'s process DAG, the bn-ibf Julia/RxInfer Bayesian network, and what the store
 actually contains — reconciled.*
 
+> ⚠ **Scope revised 2026-08-06 — see [`DIRECTION_EXPLANATION_FIRST.md`](DIRECTION_EXPLANATION_FIRST.md).**
+> This note was written with admin-1 risk as the goal. That is no longer the primary product.
+> The pipeline now leads with the **circulation explanation record** — ensemble counts over
+> circulation states per region per lead window, ESS attached to every count — and the Bayesian
+> network below is a **downstream consumer**, switched on when the observation side exists.
+> Everything here about the store's contents, the variable mapping, the absent fields and the
+> state-definition rules remains current and is the reference for both tracks; what changed is
+> which output the pipeline exists to produce. The reasoning for the change, and the three
+> conditions that would show it to be wrong, are in the direction note.
+
 Inspiration: [`icpac-igad/bn-ibf@jua-bnet`](https://github.com/icpac-igad/bn-ibf/tree/jua-bnet/flood_ibf)
 — `flood_bn_ibf_v1.jl` (RxInfer BN, soft evidence, CRMA cost-loss trigger, storyline
 selection) and `flood_data_prep.py` (icechunk → zonal evidence CSV → BN). Both patterns are

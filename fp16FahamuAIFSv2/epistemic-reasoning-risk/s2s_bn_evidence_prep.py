@@ -1,6 +1,21 @@
 #!/usr/bin/env python3
 """
-S2S process-node evidence generator — AIFS-ENS v2 Icechunk store -> BN evidence CSV.
+S2S circulation diagnostics from the AIFS-ENS v2 Icechunk store.
+
+PRIMARY OUTPUT (as of 2026-08-06, see DIRECTION_EXPLANATION_FIRST.md): the **circulation
+explanation record** (`--explain-out`) — ensemble counts over circulation states per region per
+lead window, with the effective sample size attached to every count. That is the product the
+store uniquely enables: the submission pipeline keeps 3 of 120 variables, the store keeps the
+full 3-D state, and at days 18-33 the model's real information is planetary/synoptic
+circulation, not admin-1 impact.
+
+SECONDARY OUTPUT: the Bayesian-network evidence CSVs (`--out`, `--member-out`, `--cpt-json`)
+consumed by `s2s_water_balance_bn.jl`. Risk is now a DOWNSTREAM CONSUMER of the same loci,
+switched on when the observation side exists — it is not the goal of this script.
+
+Note the deliberate asymmetry between the two: within-ensemble relative framing ("n of 50
+members place the atmosphere in regime B") is NATIVE to the explanation product and fatal to a
+calibrated risk state — which is exactly the bug recorded in the registry header.
 
 Counterpart of bn-ibf's `flood_data_prep.py`, rebuilt for this store and for the *grouped
 process ontology* of `qd-1.md.txt`:
@@ -26,18 +41,28 @@ What is different from the bn-ibf original, and why (see S2S_BN_ONTOLOGY.md):
             counted CPTs legitimate instead of pseudo-replicated over 61 correlated steps.
 
 Outputs
-  --out          one row per (unit x lead window): ensemble state fractions as soft evidence
+  --explain-out  PRIMARY. JSON circulation record per (lead window x region): regime occupancy,
+                 |IVT| distribution and threshold-exceedance counts, Somali-jet index,
+                 rainfall-environment components, precipitation-rate distribution, ESS, and a
+                 generated narrative sentence per region. No thresholds on impact, no exposure,
+                 no elicitation.
+  --out          one row per (unit x lead window): ensemble state fractions as BN soft evidence
                  `{node}_p{k}`, plus the raw ensemble-mean diagnostics.
   --member-out   one row per (unit x window x member): per-member states for storylines.
-  --cpt-out      netCDF: joint member counts for C->M, M->R, (M,R)->P with the ESS discount
-                 and full provenance (the B7 artifact schema).
+  --cpt-out /--cpt-json
+                 joint member counts for C->M, M->R, (M,R)->P with the ESS discount and full
+                 provenance (the B7 artifact schema).
 
 Usage
+  # explanation product over several circulation regions (the primary use)
   python s2s_bn_evidence_prep.py \
       --store /tank/projects/aifs-run/20260730_0000/icechunk_v2 \
       --tag cycle-20260730_0000 \
+      --regions IGAD_EA,EQ_INDIAN,CONGO --explain-out explain_20260730.json
+
+  # plus the downstream BN evidence
       --out evidence_20260730.csv --member-out evidence_members_20260730.csv \
-      --cpt-out process_cpt_20260730.nc
+      --cpt-out process_cpt_20260730.nc --cpt-json process_cpt_20260730.json
   # optional admin-1 units (no geopandas needed — pure-numpy point-in-polygon):
       --adm1 icpac_adm1v3.geojson --adm1-id GID_1 --adm1-name NAME_1
 """
@@ -154,7 +179,8 @@ def box_unit(ds, box):
     lon = ds["longitude"].values % 360.0
     m = ((lat >= box["lat"][0]) & (lat <= box["lat"][1]) &
          (lon >= box["lon"][0] % 360) & (lon <= box["lon"][1] % 360))
-    return [(box["id"], box.get("note", box["id"]).split(";")[0], m)]
+    name = box.get("note", box["id"]).split(";")[0].split("—")[0].strip().rstrip(".")
+    return [(box["id"], name, m)]
 
 
 # --------------------------------------------------------------------------------------
@@ -249,6 +275,17 @@ def runoff(ds, steps, cells):
     return _region_step_mean(ds, "ro", steps, cells).sum(axis=1) * 1000.0
 
 
+def somali_jet(ds, steps):
+    """Cross-equatorial southerly index at 850 hPa, 40-55E / 5S-5N (loc.somalijet.v1).
+
+    A FIXED geographic index, not a property of the analysis region — it describes the moisture
+    pump feeding the whole Horn, so it belongs to the lead window, not to a unit."""
+    lat = ds["latitude"].values
+    lon = ds["longitude"].values % 360.0
+    box = (lat >= -5) & (lat <= 5) & (lon >= 40) & (lon <= 55)
+    return _region_window_mean(ds, "v_850", steps, box), int(box.sum())
+
+
 def soil_water(ds, step, cells):
     """A (proxy): depth-weighted swvl1/swvl2 at the first step of the window, land cells."""
     sel = np.where(cells)[0]
@@ -325,6 +362,43 @@ def fractions(states, k):
 
 
 # --------------------------------------------------------------------------------------
+# explanation record — the primary product
+# --------------------------------------------------------------------------------------
+def dist(x):
+    """Compact distribution summary of a per-member quantity."""
+    q = np.percentile(x, [0, 10, 50, 90, 100])
+    return {"min": round(float(q[0]), 3), "p10": round(float(q[1]), 3),
+            "median": round(float(q[2]), 3), "p90": round(float(q[3]), 3),
+            "max": round(float(q[4]), 3), "mean": round(float(np.mean(x)), 3)}
+
+
+def narrate(unit_name, hours, n, ess, C, ivt_win, persistence, r_idx, rate, jet):
+    """Generated explanation sentence: counts over members, ESS always attached.
+
+    Deliberately plain and quantitative — this is the 'translate/communicate' step the MLWP
+    acceptance argument asks for, and every clause is traceable to a locus in the registry."""
+    k_top = int(np.argmax(np.bincount(C, minlength=4)))
+    n_top = int(np.bincount(C, minlength=4)[k_top])
+    n_ar = int((ivt_win > THRESH["ivt"][1]).sum())
+    n_supp = int((r_idx > THRESH["rgen"][1]).sum())
+    n_heavy = int((rate >= THRESH["tp_rate"][1]).sum())
+    n_jet = int((jet > 0).sum()) if jet is not None else None
+    s = (f"{unit_name}, hours {hours[0]}-{hours[1]}: "
+         f"{n_top} of {n} members place the circulation in regime {k_top} "
+         f"({['unfavourable','neutral','convergent','strongly convergent'][k_top]}); "
+         f"region-mean |IVT| {ivt_win.min():.0f}-{ivt_win.max():.0f} kg/m/s with "
+         f"{n_ar} of {n} above the 250 corridor threshold "
+         f"(mean duration above it {persistence.mean()*100:.0f}% of steps); "
+         f"rainfall environment supportive in {n_supp} of {n}; "
+         f"precipitation {rate.min():.2f}-{rate.max():.2f} mm/day, {n_heavy} of {n} heavy")
+    if n_jet is not None:
+        s += f"; Somali jet southerly in {n_jet} of {n}"
+    s += (f". Ensemble spread has ESS ~ {ess:.1f} of {n}, so treat every count above as "
+          f"roughly {ess:.0f} independent draws, not {n}.")
+    return s
+
+
+# --------------------------------------------------------------------------------------
 # ESS (B3) — reused from cpt_build.py: participation ratio of the member spread spectrum
 # --------------------------------------------------------------------------------------
 def ensemble_ess(anom):
@@ -354,7 +428,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--store", required=True)
     ap.add_argument("--tag", required=True)
-    ap.add_argument("--out", required=True, help="unit-level evidence CSV")
+    ap.add_argument("--explain-out", default=None,
+                    help="PRIMARY: JSON circulation explanation record")
+    ap.add_argument("--regions", default="IGAD_EA",
+                    help="comma-separated registry region keys, or 'all'")
+    ap.add_argument("--out", default=None, help="downstream BN evidence CSV")
     ap.add_argument("--member-out", default=None, help="per-member storyline sidecar CSV")
     ap.add_argument("--cpt-out", default=None, help="counted process CPT artifact (netCDF)")
     ap.add_argument("--cpt-json", default=None,
@@ -371,23 +449,52 @@ def main():
     lat, lon = ds["latitude"].values, ds["longitude"].values
     n_mem = ds.sizes["member"]
 
-    box = reg["regions"]["IGAD_EA"]
+    if not (args.explain_out or args.out):
+        ap.error("nothing to do: pass --explain-out (primary) and/or --out (BN evidence)")
+
+    keys = (list(reg["regions"]) if args.regions == "all"
+            else [k.strip() for k in args.regions.split(",")])
+    for k in keys:
+        if k not in reg["regions"]:
+            ap.error(f"unknown region '{k}'; registry has {list(reg['regions'])}")
+    boxes = [reg["regions"][k] for k in keys]
+
     if args.adm1:
+        # admin-1 units are clipped to the FIRST named region
         units = adm1_units(args.adm1, lon, lat, args.adm1_id, args.adm1_name)
-        region = box_unit(ds, box)[0][2]
-        units = [(i, n, m & region) for i, n, m in units]
+        clip = box_unit(ds, boxes[0])[0][2]
+        units = [(i, n, m & clip) for i, n, m in units]
     else:
-        units = box_unit(ds, box)
+        units = [u for b in boxes for u in box_unit(ds, b)]
     units = [(i, n, m) for i, n, m in units if m.sum() >= args.min_cells]
     print(f"[units] {len(units)} spatial unit(s) with >= {args.min_cells} N320 cells")
 
     rows, mrows, cpt_blocks = [], [], []
+    explain = {"meta": {
+        "source_store": args.store, "source_tag": args.tag,
+        "registry_version": reg["registry_version"],
+        "product": reg["explanation_products"]["circulation_record"]["id"],
+        "typing": "within-cycle ensemble counts over circulation states; n_cycles=1; "
+                  "NOT a calibrated probability and NOT a risk statement",
+        "honesty_rule": reg["explanation_products"]["circulation_record"]["honesty_rule"],
+        "created": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+        "generator": "s2s_bn_evidence_prep.py",
+    }, "windows": {}}
     for wname, w in reg["lead_windows"].items():
         steps = window_steps(ds, w["hours"])
         days = len(steps) * 6.0 / 24.0        # rate normalisation makes W1/W2 comparable
         land = land_mask(ds, steps[0])
         print(f"\n[{wname}] {w['id']} hours {w['hours']}: {len(steps)} steps "
               f"({(steps[0]+1)*6}-{(steps[-1]+1)*6} h)")
+
+        jet, jet_cells = somali_jet(ds, steps)          # fixed index, per window
+        explain["windows"][wname] = {
+            "id": w["id"], "hours": w["hours"], "n_steps": len(steps), "days": round(days, 2),
+            "somali_jet": {**dist(jet), "n_southerly": int((jet > 0).sum()),
+                           "n_members": n_mem, "cells": jet_cells,
+                           "definition": "v_850 mean, 40-55E / 5S-5N (loc.somalijet.v1)"},
+            "regions": {},
+        }
 
         for uid, uname, umask in units:
             cells = umask
@@ -415,6 +522,31 @@ def main():
 
             ro_mm = runoff(ds, steps, lcells)
             RO = states_RO(ro_mm, days)
+            rate = total / days
+
+            # ---- PRIMARY: the circulation explanation record ----
+            explain["windows"][wname]["regions"][uid] = {
+                "name": uname, "n_cells": int(cells.sum()),
+                "n_land_cells": int(lcells.sum()), "n_members": n_mem,
+                "ess": round(float(ess), 2), "redundancy": round(float(redundancy), 3),
+                "regime_occupancy": np.bincount(C, minlength=4).tolist(),
+                "regime_circulation_index": [
+                    round(float(circ_idx[C == k].mean()), 3) if (C == k).any() else None
+                    for k in range(4)],
+                "ivt_kg_m_s": {**dist(ivt_win),
+                               "n_above_250": int((ivt_win > THRESH["ivt"][1]).sum()),
+                               "n_above_350": int((ivt_win > THRESH["ivt"][2]).sum()),
+                               "persistence_mean": round(float(persistence.mean()), 3)},
+                "rainfall_environment": {
+                    "index": dist(r_idx), "ascent_pa_s": dist(ascent),
+                    "lapse_850_500_K": dist(lapse), "rh700": dist(rh700),
+                    "n_supportive": int((r_idx > THRESH["rgen"][1]).sum())},
+                "precipitation_mm_day": {**dist(rate),
+                                         "n_heavy": int((rate >= THRESH["tp_rate"][1]).sum()),
+                                         "wet_step_frac_mean": round(float(wetfrac.mean()), 3)},
+                "narrative": narrate(uname, w["hours"], n_mem, ess, C, ivt_win,
+                                     persistence, r_idx, rate, jet),
+            }
 
             row = {
                 "unit_id": uid, "unit_name": uname, "lead_window": wname,
@@ -478,8 +610,17 @@ def main():
                   f"M={fractions(M,4).round(2).tolist()} P={fractions(P,4).round(2).tolist()} "
                   f"| tp={total.mean():5.1f}mm ro={ro_mm.mean():5.2f}mm")
 
-    pd.DataFrame(rows).to_csv(args.out, index=False)
-    print(f"\n[out] {args.out}  rows={len(rows)}")
+    if args.explain_out:
+        with open(args.explain_out, "w") as f:
+            json.dump(explain, f, indent=1)
+        print(f"\n[explain] {args.explain_out}")
+        for wname, wrec in explain["windows"].items():
+            for rec in wrec["regions"].values():
+                print(f"  * {rec['narrative']}")
+
+    if args.out:
+        pd.DataFrame(rows).to_csv(args.out, index=False)
+        print(f"\n[out] {args.out}  rows={len(rows)}")
     if args.member_out:
         pd.DataFrame(mrows).to_csv(args.member_out, index=False)
         print(f"[out] {args.member_out}  rows={len(mrows)}")

@@ -1,65 +1,67 @@
-# Handover — S2S process-BN on the AIFS-ENS store, for second opinion
+# Handover — S2S process BN + the turn to explanation-first, for second opinion
 
-**Date:** 2026-08-06 · **Author:** this session (Claude Opus 5, driven by @nishadhka)
-**Status:** uncommitted working tree · Python side runs on real data · **Julia side unrun**
+**Date:** 2026-08-06 (rev 2) · **Author:** this session (Claude Opus 5, driven by @nishadhka)
+**Status:** committed · Python side runs on real data · **Julia side unrun**
 **Purpose:** hand this to a reviewer. Everything below is stated so it can be *attacked*.
 Claims are numbered; if you disagree, reply by number.
+
+*Rev 2 adds §4.6 — a scope change adopted after the BN was built. If you only have time for one
+thing, review that.*
 
 ---
 
 ## 0. TL;DR for the reviewer
 
 We adapted two ICPAC bn-ibf reference implementations (a Julia/RxInfer flood BN and its Python
-icechunk data-prep) to a different substrate: the **AIFS-ENS v2 S2S Icechunk store** (50
-members, native N320, hours 432–792), following the grouped process ontology proposed in
-`qd-1.md.txt`. Three new files, one registry bump.
+icechunk data-prep) to the **AIFS-ENS v2 S2S Icechunk store** (50 members, native N320, hours
+432–792), following the grouped process ontology in `qd-1.md.txt`. Then — after seeing what
+broke — we **demoted risk and made circulation explanation the primary product**.
 
-The three things most worth a second opinion, in order:
+Four things most worth a second opinion, in order:
 
-1. **Is the target node right?** We replaced "flood risk" with an ordered **catchment
-   water-balance pressure** (deficit ↔ surplus) because the store starts at day 18. §4.1
-2. **Is the evidence wiring honest, or subtly circular?** The chain CPTs are *counted from the
-   same 50 members* that also supply the evidence. We argue that is correct; it is also the
-   most attackable decision in the design. §4.3
-3. **Are the thresholds defensible?** All state definitions are now absolute physical
-   thresholds. Every number is a judgement call and they are listed for challenge in §6.
+1. **Was the pivot right?** Explanation-first, risk downstream. §4.6 + `DIRECTION_EXPLANATION_FIRST.md`
+2. **Does the explanation product survive its own ESS?** With ESS ≈ 1.85, `k = 4` regimes is
+   probably over-partitioned and the occupancy counts may be a k-means artefact. **This is the
+   sharpest self-criticism and it is not yet tested.** §5.1
+3. **Is the evidence wiring circular?** The chain CPTs are counted from the same 50 members that
+   supply the evidence. We argue it's the correct null; it is the most attackable design call. §4.3
+4. **Are the thresholds defensible?** Every judgement number is in one table. §6
 
----
+## 1. What existed before this work
 
-## 1. What existed before this session
-
-Committed already (`730a52c`, `e4bfe45`, `0ed0521`):
+Committed earlier (`730a52c`, `e4bfe45`, `0ed0521`):
 
 | File | What it is |
 |---|---|
-| `epistemic-reasoning-summary.md` | the CRMA/epistemic framing — loci, CPTs, evidence typing |
+| `epistemic-reasoning-summary.md`, `main.tex` | the CRMA/epistemic framing — loci, CPTs, evidence typing |
 | `ICECHUNK_S2S_DIAGNOSTICS.md` | what the store enables beyond skill scores |
-| `CPT_BUILD_CRITIQUE_AND_PLAN.md` | critique of the two above + 5-phase plan *(written earlier in this same session, commit `e4bfe45`)* |
+| `CPT_BUILD_CRITIQUE_AND_PLAN.md` | critique of both + 5-phase plan (Part 0 scale×lead; A1–A6, B1–B8, C1–C6) |
 | `NETWORK_DIRECTION.md` | Phase-0 contract: generative direction, latent `H`, evidence as children `P(E\|H)` |
 | `discretization_registry.yaml` | Phase-0 contract: versioned state definitions |
-| `cpt_build.py`, `cpt_artifact_20260730.nc`, `IMPLEMENTATION.md` | Phase-1 counter (z500 regime → IVT), ESS ≈ 1.85 finding |
+| `cpt_build.py`, `cpt_artifact_20260730.nc`, `IMPLEMENTATION.md` | Phase-1 counter; the ESS ≈ 1.85 finding |
 
-The new work is meant to sit *on top of* those contracts, not replace them. **Check that it
-actually does** — particularly that the generative direction in `NETWORK_DIRECTION.md` is
-respected (we believe it is: `RO` hangs off `W` as a child, never as a parent).
+New work sits **on top of** those contracts. Please check it actually does — in particular that
+the generative direction holds (we believe it does: `RO` hangs off `W` as a child, never a parent).
 
 ## 2. What this session added
 
-| File | Lines | Status |
-|---|---|---|
-| `S2S_BN_ONTOLOGY.md` | 296 | the reasoning; the document to review first |
-| `s2s_bn_evidence_prep.py` | 545 | **runs**, validated on `cycle-20260730_0000` |
-| `s2s_water_balance_bn.jl` | 592 | **never executed** (no Julia on this box) |
-| `discretization_registry.yaml` | +137 | bumped 0.1.0 → 0.2.0; adds `process_loci`, `blocked_loci` |
+| File | Status |
+|---|---|
+| `DIRECTION_EXPLANATION_FIRST.md` | **the scope decision** — read first |
+| `S2S_BN_ONTOLOGY.md` | ontology ↔ verified store variables; carries a scope banner pointing at the direction note |
+| `s2s_bn_evidence_prep.py` | **runs on real data**; primary path is now `--explain-out` |
+| `s2s_water_balance_bn.jl` | **never executed** (no Julia on this box); re-typed as downstream consumer |
+| `discretization_registry.yaml` | 0.1.0 → 0.2.0: `process_loci`, `blocked_loci`, circulation regions, `explanation_products` |
+| `README.md` | folder arc extended with items 5–7 |
 
-Untracked/uncommitted; `qd-1.md.txt` (the user-supplied brief) is also untracked.
-Inspiration: `icpac-igad/bn-ibf@jua-bnet` — `flood_bn_ibf_v1.jl`, `flood_data_prep.py`.
+Commits: `617864a` (file move), `f964700` (the qd-1 brief), `a988c44` (BN implementation), plus
+the commit carrying this revision. Inspiration: `icpac-igad/bn-ibf@jua-bnet` —
+`flood_bn_ibf_v1.jl`, `flood_data_prep.py`.
 
 ## 3. Verified facts — please re-verify, do not take on trust
 
-Everything below was probed directly against
-`/tank/projects/aifs-run/20260730_0000/icechunk_v2`, tag `cycle-20260730_0000`, with
-`/tank/projects/micromamba/envs/aifs-gpu/bin/python`:
+Probed directly against `/tank/projects/aifs-run/20260730_0000/icechunk_v2`, tag
+`cycle-20260730_0000`, using `/tank/projects/micromamba/envs/aifs-gpu/bin/python`:
 
 | Fact | Value |
 |---|---|
@@ -67,110 +69,108 @@ Everything below was probed directly against
 | Vars | 122 data vars; `t,u,v,w,z` on 14 levels, `q` on 13 (no 10 hPa) |
 | **Absent** | `cape`, `tcwv`, `lsm`, `z`/`slor`/`sdor` (surface orography constants) |
 | **Present, unexpectedly useful** | `ro` (runoff), `sf`, `snowc`, `swvl1/2`, `cp`, `w` at all levels |
-| Flux semantics | `tp, cp, ro, sf, ssrd, strd` are **interval per-6h**, not accumulated — established by flat field-means across lead time (the naive "fraction of cells decreasing" test is *inconclusive* for `ro`/`sf` because only 5.8 %/8.2 % of cells are nonzero) |
+| Flux semantics | `tp, cp, ro, sf, ssrd, strd` are **interval per-6h** — established by flat field-means across lead time. The naive "fraction of cells decreasing" test is **inconclusive** for `ro`/`sf` (only 5.8 %/8.2 % of cells nonzero, so ties dominate) |
 | Land mask | `finite(swvl1)` — 68.3 % NaN globally; IGAD box 11 342 cells, 8 780 land |
 
-**Re-verification is cheap** — the probe scripts are short; ask if you want them replayed.
-If any of these are wrong, most of §4 collapses, so this is the first thing to check.
+If any of these are wrong, most of §4 collapses. **Check this first.**
 
 ## 4. Design decisions — rationale *and* the case against
 
 ### 4.1 Target node = catchment water-balance pressure, not flood risk
 
-*For:* the store's first written step is hour 432. Event-scale flood reasoning at day 18–33 is
-not defensible; qd-1 says the same ("broad water-balance tendency, not catchment-specific flood
-prediction" for 360–800 h). One ordered node (strong_deficit … extreme_surplus) serves both
-flood and drought reasoning, which matches ICPAC's actual dual mandate.
-
-*Against (argue this if you want to):* it makes the output harder to act on than a flood
-probability, and it is not what the bn-ibf pipeline downstream expects. If the consumer needs a
-flood trigger, this design forces a further, unmodelled step.
+*For:* the first written step is hour 432; event-scale flood reasoning at day 18–33 is not
+defensible, and qd-1 agrees for the 360–800 h band. One ordered node serves both flood and
+drought, matching ICPAC's dual mandate.
+*Against:* harder to act on than a flood probability, and not what the bn-ibf downstream
+expects — it forces a further, unmodelled step.
 
 ### 4.2 Chain DAG instead of the original's flat multi-parent CPT
 
-*For:* bn-ibf hangs 5–6 parents on one risk node; those parents are near-independent summaries
-of a single field (TP). Here the candidates (`z500, msl, q/u/v, w, t, tp, tcw`) are all
-functions of the same model state, so as siblings they multiply-count one piece of evidence.
-qd-1 warns against exactly this ("avoid this structure"), and the critique doc's A5 makes it
-concrete.
+*For:* bn-ibf's parents are near-independent summaries of one field (TP); ours are all functions
+of the same model state, so as siblings they multiply-count one piece of evidence (qd-1's
+"avoid this structure"; critique item A5).
+*Against:* a chain asserts a sequential mechanism. Convection isn't sequential, and our
+`P(P|M,R)` canonical form imposes an interaction shape nobody validated.
 
-*Against:* a chain assumes the mechanism is genuinely sequential. Real convection is not — a
-supportive environment and moisture supply interact, and our `P(P|M,R)` canonical form imposes
-a particular interaction shape (noisy-MAX-like) that nobody has validated.
+### 4.3 ⚠ Where evidence attaches — the circularity question
 
-### 4.3 ⚠ The decision most in need of a second opinion: where evidence attaches
+Each member gives one state at every node, so 50 joint draws. We use that twice: to **count**
+`P(M|C)`, `P(R|M)`, `P(P|M,R)`, and to supply the **evidence** at `C`.
 
-The 50 members each give **one state at every node simultaneously**, i.e. a joint draw over the
-whole chain. We use that twice:
-
-- to **count** `P(M|C)`, `P(R|M)`, `P(P|M,R)` (one state per member per window, n ≤ 50,
-  ESS-discounted), and
-- to supply the **evidence** at `C`.
-
-*The obvious objection:* applying a CPT counted from sample *X* to evidence drawn from sample
-*X* is circular — the posterior just reproduces the ensemble's own joint marginal, and the BN
-adds nothing.
-
-*Our answer, which you should stress-test:* that is not a bug, it is the *correct null*. The
-forecast-side chain is only meant to transport the ensemble's joint structure faithfully; the
-BN's added value is where **non-forecast information enters** — the antecedent node `A` and the
-elicited `P(W|P,A)`, `P(RO|W)`. If a reviewer concludes the forecast side should instead be
-collapsed to a single node (since it carries one sample's information), that is a legitimate
-simplification and we would like to hear it argued.
-
-*Mitigation already in place:* `--evidence-mode chain` (default) attaches ensemble evidence
-only at `C`, `A`, `RO`; `--evidence-mode all` reproduces the naive port and **warns** that the
-posterior is over-sharpened.
+*Objection:* applying a CPT counted from sample *X* to evidence from sample *X* is circular; the
+posterior just reproduces the ensemble's joint marginal and the BN adds nothing.
+*Our answer, to be stress-tested:* that is the correct **null**. The forecast-side chain only
+transports the ensemble's joint structure; the BN's value is where non-forecast information
+enters (`A`, and the elicited `P(W|P,A)`, `P(RO|W)`). If you conclude the forecast side should
+collapse to a single node, we want that argued — under the §4.6 pivot it may be the right call
+anyway.
+*Mitigation:* `--evidence-mode chain` (default) attaches ensemble evidence only at `C`, `A`,
+`RO`; `--evidence-mode all` reproduces the naive port and **warns**.
 
 ### 4.4 Runoff as an evidence child, not a target
 
-`ro` exists in the store. We deliberately did **not** promote it to the endpoint (no routing, no
-real catchment in the model), and instead hang it off `W` as `P(RO|W)` with a deliberately flat
-likelihood, enforced by a self-test asserting the posterior shift stays < 0.30.
-
-*Against:* one could argue `ro` is the most direct catchment signal available and deserves more
-weight — or conversely that an unrouted bucket-scheme runoff should not be in the network at all.
+`ro` exists but the model has no routing and no real catchment, so it hangs off `W` as
+`P(RO|W)` with a deliberately flat likelihood (self-test asserts the posterior shift < 0.30).
+*Against:* one could argue it deserves more weight as the most direct catchment signal — or that
+unrouted bucket runoff has no place in the network at all.
 
 ### 4.5 Absolute thresholds instead of within-ensemble quantiles — a bug found by running it
 
-The first draft defined states as within-ensemble quantiles, reasoning "no climatology exists,
-so make everything relative". **That is wrong.** A quantile state is a *rank*: the fraction of
-members per state is fixed by the cut points regardless of the forecast. Empirically, on
-`cycle-20260730_0000`, every quantile-defined node returned identical soft evidence for both
-lead windows (`A = [0.2]×5`, `R = [0.26,0.24,0.24,0.26]`) — zero information. Only the k-means
-circulation node varied, because it classifies a *pattern*, not a rank.
+The first draft used within-ensemble quantiles ("no climatology, so make everything relative").
+**Wrong:** a quantile state is a *rank*, so state fractions are fixed by the cut points
+regardless of the forecast. Empirically every quantile-defined node returned identical soft
+evidence for both lead windows (`A = [0.2]×5`) — zero information. Only the k-means circulation
+node varied, because it classifies a *pattern*. Replaced with absolute physically-anchored
+thresholds (§6); after the fix the evidence tracks the forecast (R: 0.72 → 0.86 supportive).
+*Reviewer check:* sound replacement, or did we trade informationless for arbitrary?
 
-Fixed by absolute, physically-anchored thresholds (§6). After the fix the evidence moves with
-the forecast (R: 0.72 → 0.86 *supportive* between W1 and W2).
+### 4.6 ⚠ NEW — the pivot: explanation first, risk downstream
 
-*Reviewer check:* is the reasoning above right, and is the replacement sound, or did we trade an
-informationless definition for an arbitrary one?
+Adopted after the BN was built, on the evidence of what broke. Full argument and falsifiers in
+`DIRECTION_EXPLANATION_FIRST.md`; the short version:
+
+*For:* (a) every blocking dependency is on the risk side — no CHIRPS/IMERG, no EM-DAT, no
+exposure/vulnerability, no elicitation panel — plus three structural defects (§5.2, §5.3, §5.4);
+the explanation layer needs only the store and ERA5. (b) Part 0 of our own critique says
+admissibility follows scale, and admin-1 pooling projects a planetary-scale signal onto polygons
+where predictability is weakest. (c) *"n of 50 members"* framing is native to explanation and
+fatal to calibrated risk — the same property that caused the §4.5 bug. (d) The store's unique
+asset is the full 3-D state the submission discards.
+
+*Against — argue any of these:* the customer may actually need an actionable trigger, not a
+narrative; ICPAC's mandate is anticipatory action, and an explanation product may be a research
+artefact; and the pivot's cost is real — χ200, MFC and vorticity now require a regrid or
+spherical-harmonic step that was previously deferrable.
+
+*Implemented, not just declared:* `--explain-out` writes the circulation record; the registry
+carries the new circulation regions and the blocked-loci priority change; the Julia BN is
+re-typed as downstream and warns at runtime.
 
 ## 5. Known issues we did not fix — please confirm or dispute
 
-1. **`tp` is region-meaned over all cells, `ro`/`swvl` over land cells only.** Inconsistent. For
-   the whole-IGAD demo box this dilutes precipitation with ocean cells. Moot for admin-1 units
-   (all land), but it should probably be land-masked for consistency. *We consider this a real
-   defect.*
-2. **The antecedent node is not actually independent of the forecast.** The fallback `A` uses
-   the model's own `swvl1/2` from the *same run* that produces `P`. So `P(W|P,A)` treats as
-   separate parents two quantities from one model integration. The staleness problem is
-   documented in the ontology note; **this dependence problem is arguably worse** and is not.
-3. **The circulation ordering index is season-dependent.** Clusters are ordered by
+1. **⚠ `k = 4` regimes on a rank-≈2 spread.** ESS ≈ 1.85 means the ensemble spans ~2 effective
+   degrees of freedom, yet we partition into four regimes and report occupancy counts. Those
+   counts may be a k-means artefact, and this now undercuts the *primary* product, not just the
+   risk one. **Untested. The concrete test is to rerun at `k = 2` and see whether the occupancy
+   structure and the narrative survive** — this should happen before any further build.
+2. **`tp` region-meaned over all cells; `ro`/`swvl` over land only.** Inconsistent; dilutes
+   precipitation with ocean cells for box units. Moot for admin-1. *We consider this a defect.*
+3. **The antecedent node is not independent of the forecast.** The fallback `A` uses the model's
+   own `swvl1/2` from the *same run* that produces `P`, so `P(W|P,A)` treats two quantities from
+   one integration as separate parents. The ontology note documents the *staleness*; this
+   *dependence* is arguably worse and is documented only here.
+4. **The circulation ordering index is season-dependent.** Clusters are ordered by
    `z(−msl_anom) + z(v_850)`; a southerly 850 hPa anomaly is moisture-bearing for East Africa in
-   some seasons and not others (the Somali jet reverses). The ordering may invert between MAM
-   and OND. Needs a seasonal check.
-4. **Evidence is not ESS-discounted, only the counts are.** ESS ≈ 1.85 is applied when counting
-   CPTs, but the `C` state fractions enter at full strength as if 50 independent members.
-5. **`kmeans2` can return empty clusters** (`missing="warn"`); the ordering step then sorts an
-   `inf` mean. Not observed in the runs, but not guarded.
-6. **Quasi-equal-area assumption.** We take unweighted cell means on the reduced Gaussian grid
-   on the grounds that N320 cells are near-equal-area. Worth a sanity check by someone who knows
-   the grid better than we do.
-7. **Moisture node degenerate at box scale** — all 50 members in `normal` (region-mean IVT
-   157–230, inside the 150–250 bin). We call this a scale artifact and refuse to re-tune the
-   threshold to split the sample. A reviewer may reasonably say the threshold set is simply
-   wrong for regional means.
+   some seasons, not others (the Somali jet reverses). The ordering may invert MAM ↔ OND.
+5. **Evidence is not ESS-discounted, only the counts are.** `C` state fractions enter at full
+   strength as if 50 independent members.
+6. **`kmeans2` can return empty clusters** (`missing="warn"`); the ordering step then sorts an
+   `inf` mean. Not observed, not guarded.
+7. **Quasi-equal-area assumption** — unweighted cell means on the reduced Gaussian grid. Worth a
+   check by someone who knows the grid better than we do.
+8. **Moisture node degenerate at box scale** (all 50 members `normal`, region-mean IVT 157–230
+   inside the 150–250 bin). We call it a scale artefact and refuse to re-tune the threshold to
+   split the sample; you may reasonably say the threshold set is simply wrong for regional means.
 
 ## 6. Every judgement number, in one place (attack these)
 
@@ -186,81 +186,77 @@ informationless definition for an arbitrary one?
 | soil water (m³ m⁻³) | 0.12 / 0.20 / 0.28 / 0.35 | loam wilting point / field capacity |
 | runoff rate (mm day⁻¹) | 0.05 / 0.25 / 0.75 | round numbers |
 
-**Julia — `s2s_water_balance_bn.jl` (the elicited lower network, Route E):**
-`M_SCORE`, `R_SCORE`, `P_SCORE`, `A_SCORE`, `W_CENTRE`; kernel widths `sigma` (1.0 for W1,
-**1.35 for W2** — the deliberate widening with lead); the two named non-linearities in
-`P(W|P,A)` (**−0.45** heavy-rain-on-dry-ground damping, **+0.45** persistent-rain-on-wet
-amplification); the `w_pers` episodic/persistent split; the `P(RO|W)` matrix; and
-`cost_loss_ratio = 0.2` (pre-positioned stockpiles, Weingärtner & Wilkinson 2019) in the
-two-sided CRMA rule.
+**Julia — the elicited lower network (Route E):** `M_SCORE`, `R_SCORE`, `P_SCORE`, `A_SCORE`,
+`W_CENTRE`; kernel widths `sigma` (1.0 for W1, **1.35 for W2** — the deliberate widening with
+lead); the two named non-linearities in `P(W|P,A)` (**−0.45** heavy-rain-on-dry damping,
+**+0.45** persistent-rain-on-wet amplification); the `w_pers` episodic/persistent split; the
+`P(RO|W)` matrix; `cost_loss_ratio = 0.2` (Weingärtner & Wilkinson 2019) in the two-sided CRMA rule.
 
-**Structural choices:** `k = 4` regimes; lead windows W1 = 432–576 h, W2 = 582–792 h;
-region box lat [−12, 18], lon [22, 52].
+**Structural:** `k = 4` regimes (see §5.1); lead windows W1 = 432–576 h, W2 = 582–792 h;
+regions `IGAD_EA` [−12,18]×[22,52], `EQ_INDIAN`, `WIO`, `CONGO` (registry).
 
 ## 7. What is tested, and what is not
 
 **Tested (real data, `cycle-20260730_0000`):** the whole Python path — store open, masks, all
-six diagnostics, state assignment, soft evidence, per-member sidecar, counted CPTs, netCDF and
-JSON artifacts. Sanity checks that passed: counts sum to 50 (one state per member — the A1
-rule); C occupancy `[8,11,15,16]` matches the reported fractions; ESS 1.85/1.87 reproduces the
-earlier `cpt_build.py` finding; unobserved parent rows fall back to the prior, observed rows
-carry real structure (`M→R` = `[0.05, 0.274, 0.626, 0.05]`).
+six diagnostics, Somali-jet index, state assignment, soft evidence, per-member sidecar, counted
+CPTs, netCDF/JSON artifacts, and the explanation record over multiple regions. Sanity checks
+that passed: counts sum to 50 (one state per member — critique rule A1); C occupancy
+`[8,11,15,16]` matches the reported fractions; ESS 1.85/1.87 reproduces the earlier
+`cpt_build.py` finding; unobserved parent rows fall back to the prior while observed rows carry
+real structure (`M→R` = `[0.05, 0.274, 0.626, 0.05]`).
 
-**Not tested:** *anything in Julia.* No Julia on this machine. The BN mirrors the reference
-file's verified RxInfer idioms (`DiscreteTransition(node, diageye(K))` evidence channels,
-`@initialization`, `missing` on the queried node) and ships a `--test` self-check covering CPT
-normalisation, wet/dry monotonicity, the runoff-corroboration bound and the lead-window
-widening — **but none of it has been run.** The default inference path (`infer_chain`) is exact
-tensor contraction and does not need RxInfer at all, so a reviewer with Julia can start there.
-Also untested: the `--adm1` GeoJSON path (pure-numpy point-in-polygon, written because
-geopandas/regionmask are not installed) — no admin-1 file was available.
+**Not tested:** *anything in Julia* — no Julia on this machine. The BN mirrors the reference
+file's verified RxInfer idioms and ships a `--test` self-check (CPT normalisation, wet/dry
+monotonicity, runoff-corroboration bound, lead-window widening) — **none of it has been run.**
+Its default path (`infer_chain`) is exact tensor contraction and needs no RxInfer, so start
+there. Also untested: the `--adm1` GeoJSON path (hand-rolled point-in-polygon, written because
+geopandas/regionmask aren't installed) — no admin-1 file was available.
 
-**No verification of any kind against observations.** No skill, no null model, no calibration.
+**No verification against observations of any kind.** No skill, no null model, no calibration.
 
 ## 8. Suggested review order
 
-1. §3 — re-verify the store facts; if `tp`/`ro` interval semantics or the absent-field list are
-   wrong, stop and tell us.
-2. §4.3 — the circularity question. This is the one we most want challenged.
-3. §5.1 and §5.2 — the two defects we have named but not fixed.
-4. §6 — the thresholds and elicited scores, ideally by someone with East-African forecasting
-   experience rather than by a modeller.
-5. Run `julia s2s_water_balance_bn.jl --test` if you have Julia, and tell us what breaks.
+1. §3 — re-verify the store facts. If the interval semantics or the absent-field list are wrong,
+   stop and tell us.
+2. §4.6 — the pivot. Right call, or are we abandoning the actionable product?
+3. §5.1 — the `k = 2` test. Cheap to run, and it can undercut the new primary product.
+4. §4.3 — the circularity question.
+5. §5.2–5.4 — the defects we named but did not fix.
+6. §6 — thresholds and elicited scores, ideally by someone with East-African forecasting
+   experience rather than a modeller.
+7. Run `julia s2s_water_balance_bn.jl --test` if you have Julia, and tell us what breaks.
 
 ## 9. Open questions for a human decision
 
-- Is a **water-balance tendency** the product ICPAC wants from day-18–33 lead, or should this
-  target a seasonal-outlook framing instead?
+- Does the duty forecaster want *"31 of 50 members, ESS ≈ 2"*, or a probability they can act on?
+  This decides whether §4.6 was right.
 - Should the forecast side collapse to a single node (§4.3)?
-- Which spatial unit is canonical — admin-1, or hydrological catchments? The code supports
-  arbitrary polygons; nobody has decided.
-- Who owns the elicited numbers in §6? They are currently *ours*, which is the wrong provenance
-  for an operational network — the plan calls for a named-expert elicitation record.
-- Do we accept the model soil-moisture proxy for `A` in the interim, or block the whole chain
-  until the CHIRPS/IMERG ingest (Phase 2) or the reduced full-window field set exists?
+- Which spatial unit is canonical — admin-1, hydrological catchments, or circulation regions?
+  The code supports arbitrary polygons; nobody has decided.
+- Who owns the elicited numbers in §6? Currently *ours*, which is the wrong provenance for an
+  operational network.
+- Do we accept the model soil-moisture proxy for `A` in the interim, or block the risk track
+  until CHIRPS/IMERG (Phase 2) or the reduced full-window field set exists?
+- Is a regrid/spherical-harmonic step (for χ200, MFC, vorticity) worth funding now that it is
+  the explanation product's main blocker?
 
 ## 10. Reproduce
 
 ```bash
+# PRIMARY — circulation explanation record over several regions
 python s2s_bn_evidence_prep.py \
-    --store /tank/projects/aifs-run/20260730_0000/icechunk_v2 \
-    --tag cycle-20260730_0000 \
-    --out evidence_20260730.csv --member-out evidence_members_20260730.csv \
-    --cpt-out process_cpt_20260730.nc --cpt-json process_cpt_20260730.json
-# ~4 min, single unit; the IVT vertical integral over 13 levels dominates the runtime
+    --store /tank/projects/aifs-run/20260730_0000/icechunk_v2 --tag cycle-20260730_0000 \
+    --regions IGAD_EA,EQ_INDIAN,CONGO --explain-out explain_20260730.json
 
+# DOWNSTREAM — BN evidence + the risk network
+python s2s_bn_evidence_prep.py ... --out evidence.csv --member-out members.csv \
+    --cpt-json process_cpt.json
 julia --project s2s_water_balance_bn.jl --test
-julia --project s2s_water_balance_bn.jl \
-    --input-csv evidence_20260730.csv --output-csv wbp_20260730.csv \
-    --cpt-json process_cpt_20260730.json --evidence-mode chain
+julia --project s2s_water_balance_bn.jl --input-csv evidence.csv --output-csv wbp.csv \
+    --cpt-json process_cpt.json --evidence-mode chain
 ```
 
-Python env: `/tank/projects/micromamba/envs/aifs-gpu` (icechunk, xarray, zarr≥3, scipy, yaml,
-pandas — **no** geopandas/regionmask, hence the hand-rolled point-in-polygon).
-Julia deps required but never installed here: `RxInfer, CSV, DataFrames, JSON3`.
-
----
-
-*Nothing in this handover is committed. Working tree: `discretization_registry.yaml` modified;
-`S2S_BN_ONTOLOGY.md`, `s2s_bn_evidence_prep.py`, `s2s_water_balance_bn.jl`, `qd-1.md.txt`
-untracked; the `ICECHUNK_S2S_DIAGNOSTICS.md` move into this folder is staged from earlier.*
+Runtime ≈ 4 min per region (the 13-level IVT integral dominates). Python env:
+`/tank/projects/micromamba/envs/aifs-gpu` (icechunk, xarray, zarr≥3, scipy, yaml, pandas —
+**no** geopandas/regionmask). Julia deps required but never installed here:
+`RxInfer, CSV, DataFrames, JSON3`.

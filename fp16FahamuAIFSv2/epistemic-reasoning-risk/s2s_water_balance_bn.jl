@@ -4,6 +4,15 @@ S2S catchment water-balance Bayesian network — AIFS-ENS v2 / Icechunk / RxInfe
 Adapted from bn-ibf `flood_ibf/flood_bn_ibf_v1.jl` (ICPAC IBF team) to the grouped PROCESS
 ontology of `qd-1.md.txt` and to what the AIFS-ENS v2 Icechunk store actually contains.
 
+SCOPE (2026-08-06, DIRECTION_EXPLANATION_FIRST.md): this network is a DOWNSTREAM CONSUMER, not
+the primary product. The pipeline's primary output is now the circulation explanation record
+(`s2s_bn_evidence_prep.py --explain-out`) — ensemble counts over circulation states with the
+effective sample size attached. This BN consumes the same loci and adds the risk framing on
+top, but its lower half (`P(W|P,A)`, `P(RO|W)`) is elicited and unverifiable until the
+observation side exists, and its antecedent node is a model proxy. Read its output as a
+structured hypothesis about catchment water balance, NOT as a calibrated risk product. The
+mechanism below is unchanged; only its status is.
+
 What changed from the flood original, and why (full argument in S2S_BN_ONTOLOGY.md):
 
   * TARGET.  The original targets flood risk at a 0-7 day lead. This store holds hours
@@ -376,6 +385,10 @@ function run_csv(input_csv::String, output_csv::String;
                  evidence_mode::String="chain",
                  cost_loss_ratio::Float64=0.2,
                  use_rxinfer::Bool=false)
+    @info "DOWNSTREAM CONSUMER (DIRECTION_EXPLANATION_FIRST.md): the primary product is the " *
+          "circulation explanation record. Output below carries an ELICITED, unverified " *
+          "P(W|P,A) and a MODEL-PROXY antecedent node — a structured hypothesis, not a " *
+          "calibrated risk product."
     df = CSV.read(input_csv, DataFrame)
     colnames = names(df)
     counted = cpt_json === nothing ? Dict() : load_counted_cpts(cpt_json)

@@ -66,6 +66,33 @@ That refusal is the whole point: **the code will not turn a single low-DOF forec
 confident belief at a scale where belief is not yet justified** — the acceptance criterion the
 opening argument actually proposes.
 
+## The S2S process BN, and the turn to explanation-first (2026-08-05/06)
+
+5. **`qd-1.md.txt`** → **`S2S_BN_ONTOLOGY.md`** — *the process ontology.* A grouped physical DAG
+   (circulation → moisture transport → rainfall environment → precipitation forcing +
+   antecedent wetness → catchment water-balance pressure) reconciled against the **verified**
+   store contents. Adapts `icpac-igad/bn-ibf@jua-bnet`: `s2s_bn_evidence_prep.py` (store →
+   evidence, after `flood_data_prep.py`) and `s2s_water_balance_bn.jl` (RxInfer BN, after
+   `flood_bn_ibf_v1.jl`). Key findings: `cape`/`tcwv`/`lsm`/orography **absent**; `ro`/`swvl`
+   **present** (runoff enters as an evidence *child*, never the target); `tp`/`cp`/`ro`/`sf`
+   are **interval per-6h**; the target is a water-balance *tendency* because the store starts
+   at day 18.
+6. **`DIRECTION_EXPLANATION_FIRST.md`** — *the turn.* The primary product becomes the
+   **circulation explanation record** (ensemble counts over circulation states per region per
+   lead window, ESS attached to every count); the risk network becomes a downstream consumer.
+   Reason: every blocking dependency and structural defect sits on the risk side, while the
+   explanation side needs only the store and ERA5 — and *"n of 50 members"* framing is native
+   to explanation and fatal to calibrated risk. Cost: the derivative diagnostics (χ200, MFC,
+   vorticity) stop being deferrable and now need a regrid or spherical-harmonic step.
+7. **`HANDOVER.md`** — *for a second opinion.* Decisions with the case against each, every
+   judgement number in one table, and what is tested vs unrun.
+
+```bash
+python s2s_bn_evidence_prep.py \
+  --store /tank/projects/aifs-run/20260730_0000/icechunk_v2 --tag cycle-20260730_0000 \
+  --regions IGAD_EA,EQ_INDIAN,CONGO --explain-out explain_20260730.json
+```
+
 ## Not built (honest scope)
 
 Forecast-side only. Reserved in the registry, needing external data or many cycles:

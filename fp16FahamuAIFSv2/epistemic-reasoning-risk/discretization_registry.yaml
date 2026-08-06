@@ -24,6 +24,26 @@ regions:
     lat: [-12.0, 18.0]
     lon: [22.0, 52.0]
     note: "Greater Horn / IGAD box on native N320 cells; pool-THEN-classify (B4)."
+  # Circulation regions for the explanation-first product (DIRECTION_EXPLANATION_FIRST.md):
+  # the point is to describe the SOURCE circulation, not only the receiving region.
+  EQ_INDIAN:
+    id: "reg.EQIO.v1"
+    lat: [-10.0, 10.0]
+    lon: [50.0, 100.0]
+    note: "Equatorial Indian Ocean — IOD/Walker fingerprint and the moisture source for the
+           East-African rains."
+  WIO:
+    id: "reg.WIO.v1"
+    lat: [-25.0, 5.0]
+    lon: [40.0, 70.0]
+    note: "Western Indian Ocean — TC genesis region and southern-swell corridor toward the
+           East-African coast."
+  CONGO:
+    id: "reg.CONGO.v1"
+    lat: [-10.0, 5.0]
+    lon: [12.0, 30.0]
+    note: "Congo basin — the western moisture source; the Congo air boundary is a decisive
+           control on western Ethiopian / South Sudanese rainfall."
 
 # --- Loci (forecast-side, Phase 1: grade-A no-baseline paths) ------------------------------
 loci:
@@ -182,7 +202,26 @@ process_loci:
            catchment response. It is a bucket-scheme response with no routing and no real
            catchment — hence grade B and evidence-child, never the target itself."
 
+# --- Explanation products (DIRECTION_EXPLANATION_FIRST.md) ---------------------------------
+# The PRIMARY output as of 2026-08-06: ensemble counts over circulation states, per region per
+# lead window, with the ESS caveat attached to every count. These are NOT risk states and carry
+# no threshold, no exposure and no elicitation. Within-ensemble relative framing ("n of 50
+# members") is NATIVE here — the same relativity that is fatal for a calibrated risk state.
+explanation_products:
+  circulation_record:
+    id: "exp.circrecord.v1"
+    emits: "regime occupancy, |IVT| distribution + threshold exceedance counts, Somali-jet
+            index, rainfall-environment components, precipitation-rate distribution, ESS"
+    loci: ["loc.circ.v1", "loc.moist.v1", "loc.somalijet.v1", "loc.rgenv.v1", "loc.precf.v1"]
+    honesty_rule: "every record states ESS alongside n=50; a count of members is never reported
+                   without the number of effectively independent members"
+
 # --- Blocked / deferred loci (fields verified ABSENT from the store) -----------------------
+# PRIORITY CHANGE 2026-08-06: under the explanation-first direction the divergence/derivative
+# diagnostics stop being deferrable — velocity potential chi200, the Walker/divergent
+# circulation and moisture-flux convergence ARE the product. `moisture_flux_convergence` below
+# is therefore a FIRST-CLASS blocker requiring a regrid or spherical-harmonic step, not a
+# registered absence.
 blocked_loci:
   turkana_jet:
     id: "loc.turkanajet.v1"
