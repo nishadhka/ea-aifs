@@ -9,7 +9,7 @@
 # grade: evidence grade from epistemic-reasoning-summary.md (A hard-relative/no-baseline,
 #        C needs-baseline, etc.). baseline: what the state is measured against.
 
-registry_version: "0.1.0"
+registry_version: "0.2.0"
 
 # --- Lead windows (Part 0 rule B1: every CPT carries exactly one) -------------------------
 # Stored steps are hours 432..792 (days 18..33), 6-hourly. AI-WQ-aligned weekly windows.
@@ -61,6 +61,142 @@ loci:
     baseline: "ensemble-median-of-this-cycle (binary)"
     states: ["jet_weak", "jet_strong"]
     derivation_fields: ["v_850"]
+
+# --- Process-group loci (v0.2.0) — the qd-1 grouped ontology -------------------------------
+# These are the BN's evidence nodes: ONE node per physical process, each estimated from a few
+# store fields OUTSIDE the BN (qd-1: "the diagnostic calculation occurs outside the BN").
+# All are region-pooled before classification (Part-0 admissibility). Consumed by
+# s2s_bn_evidence_prep.py and s2s_water_balance_bn.jl.
+#
+# STATE DEFINITIONS ARE ABSOLUTE PHYSICAL THRESHOLDS, NOT WITHIN-ENSEMBLE QUANTILES.
+# The first v0.2.0 draft used within-ensemble quantiles ("no climatology exists, so make every
+# state relative"). That is wrong and was caught by running it: a quantile state is a RANK, so
+# the fraction of members in each state is fixed by the cut points regardless of the forecast —
+# quartiles always yield [.25,.25,.25,.25]. Verified on cycle-20260730_0000: every
+# quantile-defined node returned IDENTICAL state fractions for both lead windows, i.e. the
+# unit-level soft evidence carried zero information. Only the k-means circulation node (a
+# pattern classification, not a rank) varied. States therefore need a FIXED reference. Until a
+# model climatology exists (Phase 4 / Route B), that reference is the physically-anchored
+# thresholds below. They are provisional BY CONSTRUCTION and the anchors are stated; changing
+# any number mints a NEW id and counts never pool across ids.
+
+process_loci:
+
+  circulation_regime:
+    id: "loc.circ.v1"
+    grade: "A-relative"
+    node: "C"
+    states: ["unfavourable", "neutral", "convergent", "strongly_convergent"]
+    fields: ["z_500", "msl", "v_850"]
+    method: "window-mean z_500 anomaly from the 50-member mean over the region -> whiten ->
+             k-means K=4 (one state per member, A1). Clusters are then ORDERED by a
+             circulation-only index  idx = z(-msl_anom) + z(v_850 region-mean)  so the state
+             labels are physically ordered and comparable within the cycle."
+    baseline: "ensemble-mean-of-this-cycle"
+    ordering_rule: "ascending circulation index; humidity is deliberately EXCLUDED from the
+                    ordering so C stays independent of M's moisture content (non-circular)"
+    supersedes: "loc.z500regime.v1 (unordered k-means labels)"
+
+  moisture_transport:
+    id: "loc.moist.v1"
+    grade: "A-relative"
+    node: "M"
+    states: ["deficient", "normal", "enhanced", "extreme_persistent"]
+    fields: ["q_*", "u_*", "v_*"]
+    method: "|IVT| = |(1/g) integral of q*(u,v) dp| over the 13 shared levels; region-mean;
+             window-mean per member. Persistence = fraction of window steps whose region-mean
+             |IVT| exceeds the ABSOLUTE 'enhanced' threshold (250)."
+    levels: [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000]
+    baseline: "ABSOLUTE — region-mean |IVT| in kg m-1 s-1"
+    thresholds: "deficient <150; normal 150-250; enhanced 250-350; extreme_persistent >=350
+                 AND persistence >= 0.5"
+    anchor: "the standard AR magnitude criterion (Guan & Waliser, 250 kg m-1 s-1) at
+             0.6x / 1.0x / 1.4x. NOTE the scale caveat: these anchor a LOCAL IVT, so a
+             whole-region mean will sit in one bin (verified: all 50 members 157-230 ->
+             'normal' for reg.IGAD.v1). The intended unit is an admin-1 / catchment; a
+             degenerate node over a large box is a scale artifact, not a signal."
+    excludes: "tcw and tp — same q,u,v source (A5 derivation-independence). tcw may be
+               reported as a cross-check but never as a second parent."
+
+  rainfall_environment:
+    id: "loc.rgenv.v1"
+    grade: "A-relative"
+    node: "R"
+    states: ["suppressed", "weakly_supportive", "supportive", "strongly_supportive"]
+    fields: ["w_500", "w_700", "t_850", "t_500", "q_700", "t_700", "sp"]
+    method: "NO CAPE IN STORE. Index = ascent/0.01 + (lapse-26)/3 + (rh700-0.50)/0.15, where
+             ascent = -(w_500 + w_700)/2 (Pa/s; negative w is ascent),
+             lapse  = t_850 - t_500 (K; larger = steeper = less stable),
+             rh700  = q_700 / q_sat(t_700, 700 hPa)  [Tetens]. Region+window mean per member."
+    baseline: "ABSOLUTE — index cuts at [-1.0, 0.5, 2.0]"
+    anchor: "0.01 Pa/s ~ modest large-scale ascent; 26 K ~ typical tropical 850-500 lapse;
+             RH700 0.50 ~ the dry/moist mid-level divide. Sub-scores are physically scaled,
+             NOT z-scored (a z-score is a within-ensemble rank — see the header note)."
+    note: "qd-1 asks for CAPE; cape is ABSENT from the store (verified 20260730). This index is
+           the documented substitute — it is an ENVIRONMENT index, not an instability proxy."
+
+  precipitation_forcing:
+    id: "loc.precf.v1"
+    grade: "A-relative"
+    node: "P"
+    states: ["below_normal", "normal", "heavy_episodic", "heavy_persistent"]
+    fields: ["tp"]
+    method: "tp is INTERVAL (per-6h) in metres — verified on cycle-20260730_0000; no
+             de-accumulation. Region-mean per step -> mm. Per member per window compute:
+             total, peak rolling 24 h (4 consecutive steps), wet-step fraction (>0.2 mm/6h)."
+    baseline: "ABSOLUTE — precipitation RATE in mm/day (window total / window days), so W1 and
+               W2 are directly comparable despite their different lengths"
+    thresholds: "below_normal <1.0 mm/day; normal 1.0-4.0; heavy >=4.0, then split by SHAPE:
+                 peak24/total > 0.5 -> heavy_episodic else heavy_persistent. The shape rule is
+                 a scale-free ratio, so it holds at any unit size."
+
+  antecedent_wetness:
+    id: "loc.antecedent.v2proxy"
+    grade: "B-proxy"
+    node: "A"
+    states: ["very_dry", "dry", "normal", "wet", "saturated"]
+    fields: ["swvl1", "swvl2"]
+    method: "STORE-SIDE FALLBACK ONLY. Land-cell region-mean of the volumetric soil water in
+             the top two layers at the FIRST step of the window (hour 432 / 582), per member."
+    baseline: "ABSOLUTE — volumetric soil water m3/m3, cuts at [0.12, 0.20, 0.28, 0.35]"
+    anchor: "loam wilting point ~0.12 and field capacity ~0.30; saturation above ~0.35"
+    honest_limits: "This is the MODEL's soil water after 18+ days of free run with no land-surface
+                    data assimilation — not an observed antecedent state. The observed node
+                    (loc.antecedentR1.v1, CHIRPS/IMERG) is the real one and is still unbuilt.
+                    See S2S_BN_ONTOLOGY.md 'the antecedent gap': observations at init are ~18
+                    days stale for this window and the 0-432 h forcing is not stored."
+    land_mask: "finite(swvl1) — lsm is ABSENT from the store; the input-side LSM mask survives
+                as NaN over sea, so finite(swvl1) IS the land mask (31.7% of global cells)."
+
+  runoff_response:
+    id: "loc.runoff.v1"
+    grade: "B-proxy"
+    node: "RO"
+    role: "EVIDENCE CHILD of the water-balance node W — P(RO | W), not a parent"
+    states: ["nil", "low", "moderate", "high"]
+    fields: ["ro"]
+    method: "ro is INTERVAL per-6h in m (verified: flat with lead time, 5.8% nonzero cells);
+             land-cell region-sum over the window -> mm per member."
+    baseline: "ABSOLUTE — runoff RATE mm/day, cuts at [0.05, 0.25, 0.75]"
+    note: "The model DOES output runoff, contra the assumption that AIFS says nothing about
+           catchment response. It is a bucket-scheme response with no routing and no real
+           catchment — hence grade B and evidence-child, never the target itself."
+
+# --- Blocked / deferred loci (fields verified ABSENT from the store) -----------------------
+blocked_loci:
+  turkana_jet:
+    id: "loc.turkanajet.v1"
+    status: "BLOCKED — needs orography (slor, sdor, z-surface). Those are INPUT constants and
+             are NOT written to the store (verified). Requires a static N320 constants file."
+  moisture_flux_convergence:
+    id: "loc.mfc.v1"
+    status: "BLOCKED — divergence needs a spatial derivative; the store is on an UNSTRUCTURED
+             reduced-Gaussian `values` axis where naive gradients are undefined. Needs either
+             earthkit-regrid to a regular grid or a spherical-harmonic step. All v0.2.0
+             diagnostics are integral/mean-based by design to avoid this."
+  cape_instability:
+    id: "loc.cape.v1"
+    status: "BLOCKED — cape ABSENT from the store. Substituted by loc.rgenv.v1."
 
 # --- Observation-side loci (Phase 2/3 — NOT YET IMPLEMENTED; placeholders) -----------------
 # tp as a CHIRPS-climatology tercile (retires within-ensemble tercile, A3/R2) and the R1
