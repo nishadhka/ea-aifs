@@ -120,9 +120,18 @@ def decode_grib_bytes(raw):
 
 
 def decode_grib_bytes_eccodes(raw):
-    """eccodes fallback for PDTs gribberish rejects (e.g. wave-group templates)."""
+    """eccodes fallback for PDTs gribberish rejects (e.g. wave-group templates).
+
+    Wave params are ocean-only; land points carry the GRIB missing-value
+    sentinel (9999). codes_get_values() returns it raw unless the
+    missingValue key is set to NaN first - without this, land points come
+    back as the literal value 9999 instead of NaN (silently wrong, not an
+    error). Confirmed against a production pkl: without this line, all 12
+    wave fields had 9999 at ~30% of points (land) where production had NaN.
+    """
     gid = eccodes.codes_new_from_message(raw)
     try:
+        eccodes.codes_set(gid, "missingValue", np.nan)
         arr = np.asarray(eccodes.codes_get_values(gid), dtype=np.float64).reshape(RAW_SHAPE)
     finally:
         eccodes.codes_release(gid)
