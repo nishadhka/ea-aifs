@@ -93,6 +93,20 @@ opening argument actually proposes.
    `loc.circ.v1`; counts never pool across them) in Python, in the Julia BN's node arity, and in
    the registry. The defensible statement is *"the ensemble carries two circulation stories,
    split 26/24"* — not a four-regime fan. Artifact: `k_regimes_test_20260730.json`.
+9. **`mrp_stability_test.py`** — *the same standard, applied to the threshold nodes.* The ARI
+   protocol does **not** transfer (threshold states are a deterministic function of each
+   member's own value, so subsample re-labelling is trivially perfect); tested instead for
+   degeneracy, cut fragility, threshold sensitivity and sampling error. **The 4-state
+   partitions of M/R/P are not resolved either:** M occupies **1.33 of 4** states on average
+   (4 of 6 cases fully degenerate), R and P **2.0 of 4**, and cuts inside the ensemble range
+   sit almost on the distribution's density peak (up to **0.99**). Thresholds were deliberately
+   **not** re-tuned — that is the C3 failure — so records now carry a `state_resolution` flag,
+   the product leads with ranges and named-threshold exceedance counts, and the model
+   climatology (E4) becomes the priority. Artifact: `mrp_stability_20260730.json`.
+
+**What the two tests jointly establish:** this ensemble supports statements about *where the
+distribution sits relative to named physical thresholds*, and does **not** support fine
+categorical partitions of any kind — clustered or threshold-defined.
 
 ```bash
 python s2s_bn_evidence_prep.py \

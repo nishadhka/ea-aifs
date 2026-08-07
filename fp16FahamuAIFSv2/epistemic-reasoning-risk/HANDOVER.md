@@ -52,6 +52,7 @@ the generative direction holds (we believe it does: `RO` hangs off `W` as a chil
 | `S2S_BN_ONTOLOGY.md` | ontology ↔ verified store variables; carries a scope banner pointing at the direction note |
 | `s2s_bn_evidence_prep.py` | **runs on real data**; primary path is now `--explain-out` |
 | `k_regimes_test.py` + `k_regimes_test_20260730.json` | **runs**; the stability test that moved production from k=4 to k=2 |
+| `mrp_stability_test.py` + `mrp_stability_20260730.json` | **runs**; the M/R/P state-resolution test — 4-state partitions unresolved |
 | `s2s_water_balance_bn.jl` | **never executed** (no Julia on this box); re-typed as downstream consumer |
 | `discretization_registry.yaml` | 0.1.0 → 0.2.0: `process_loci`, `blocked_loci`, circulation regions, `explanation_products` |
 | `README.md` | folder arc extended with items 5–7 |
@@ -160,10 +161,24 @@ re-typed as downstream and warns at runtime.
    `k_regimes_test_20260730.json`.
    *Still open for the reviewer:* (a) is the ARI-on-subsamples protocol the right stability
    test here, or would you prefer a different one; (b) **one case dissents** — EQ_INDIAN week
-   4–5 prefers k = 3 (k=2 ARI 0.53 there); (c) the same guilty-until-tested standard has **not**
-   been applied to the other multi-category diagnostics (M, R, P all have 4 states set by
-   thresholds rather than clustering — thresholds don't have this failure mode, but the
-   *reporting* of 4-way splits on ~2 effective draws deserves the same scepticism).
+   4–5 prefers k = 3 (k=2 ARI 0.53 there).
+
+1b. **✅ ALSO RESOLVED — M / R / P were tested too, and they failed as well.**
+   `mrp_stability_test.py` (artifact `mrp_stability_20260730.json`). The ARI protocol does not
+   transfer to threshold-defined states — a member's state is a deterministic function of its
+   own value, so subsample re-labelling is trivially perfect and measures nothing. Tested
+   instead: degeneracy, cut fragility (density at the cut ÷ peak density), threshold
+   sensitivity (TVD under ±10 %/±25 % cut shifts), sampling error (bootstrap at n=50 and
+   n=ESS). Result over 6 cases: **M occupies 1.33 of 4 states** (4 cases fully degenerate),
+   **R and P occupy 2.0 of 4**, with 4 of 6 cases FRAGILE each. Cuts inside the ensemble range
+   sit almost on the density peak (up to **0.99**, 11 of 50 members within 5 % of the spread of
+   the line). At n_eff the 90 % CI on a fraction is **0.33–1.00 wide**.
+   *Action:* thresholds deliberately **NOT** re-tuned (that is failure C3 — fitting the
+   partition to one event). Instead every record carries a `state_resolution` flag, the product
+   leads with ranges + named-threshold exceedance counts, and the case for the model
+   climatology (E4) is now the strongest item in the roadmap.
+   *Open for the reviewer:* is "don't re-tune, flag it, and prioritise the climatology" the
+   right response, or should the state vocabularies be cut to 2–3 states now?
 2. **`tp` region-meaned over all cells; `ro`/`swvl` over land only.** Inconsistent; dilutes
    precipitation with ocean cells for box units. Moot for admin-1. *We consider this a defect.*
 3. **The antecedent node is not independent of the forecast.** The fallback `A` uses the model's
@@ -231,8 +246,8 @@ geopandas/regionmask aren't installed) — no admin-1 file was available.
 1. §3 — re-verify the store facts. If the interval semantics or the absent-field list are wrong,
    stop and tell us.
 2. §4.6 — the pivot. Right call, or are we abandoning the actionable product?
-3. §5.1 — the k-regimes stability test: is the protocol sound, and should the same standard
-   be applied to the other 4-state diagnostics?
+3. §5.1 and §5.1b — the two stability tests. Are the protocols sound, and is "flag it, don't
+   re-tune it, prioritise the climatology" the right response to unresolved state partitions?
 4. §4.3 — the circularity question.
 5. §5.2–5.4 — the defects we named but did not fix.
 6. §6 — thresholds and elicited scores, ideally by someone with East-African forecasting

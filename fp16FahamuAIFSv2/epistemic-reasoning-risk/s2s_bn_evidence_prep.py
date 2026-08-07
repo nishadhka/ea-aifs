@@ -369,6 +369,38 @@ def fractions(states, k):
 # --------------------------------------------------------------------------------------
 # explanation record — the primary product
 # --------------------------------------------------------------------------------------
+def state_resolution(x, cuts, k):
+    """How much of a k-state partition this ensemble actually resolves.
+
+    mrp_stability_test.py found the 4-state partitions of M/R/P are mostly NOT resolved: on
+    average 1.3 (M) to 2.0 (R, P) of 4 states are occupied, and the cuts that fall inside the
+    ensemble range usually land on the density PEAK (density-at-cut up to 0.99), so the split
+    is decided by where the line sits rather than by the forecast. Thresholds are deliberately
+    NOT re-tuned to this cycle's density valleys — that is the threshold-re-tuning failure the
+    critique names (C3). Instead every record carries this flag, so a fragile split is visible.
+    """
+    lab = np.searchsorted(np.asarray(cuts, float), x, side="right")
+    occ = np.bincount(lab, minlength=k)[:k]
+    n_occ = int((occ > 0).sum())
+    spread = float(x.max() - x.min())
+    worst_density, worst_cut = 0.0, None
+    if spread > 0:
+        bw = 1.06 * max(float(np.std(x, ddof=1)), 1e-12) * len(x) ** (-1 / 5)
+        grid = np.linspace(x.min(), x.max(), 256)
+        dens = lambda t: np.exp(-0.5 * ((np.asarray(t)[..., None] - x) / bw) ** 2).sum(-1)
+        peak = float(dens(grid).max())
+        for c in cuts:
+            if x.min() <= c <= x.max() and peak > 0:
+                d = float(dens(np.array([float(c)]))[0] / peak)
+                if d > worst_density:
+                    worst_density, worst_cut = d, float(c)
+    flag = ("degenerate" if n_occ <= 1 else
+            "fragile" if worst_density > 0.5 else "resolved")
+    return {"occupancy": occ.tolist(), "n_states_occupied": n_occ, "n_states_defined": k,
+            "worst_cut": worst_cut, "density_at_worst_cut": round(worst_density, 3),
+            "flag": flag}
+
+
 def dist(x):
     """Compact distribution summary of a per-member quantity."""
     q = np.percentile(x, [0, 10, 50, 90, 100])
@@ -377,7 +409,7 @@ def dist(x):
             "max": round(float(q[4]), 3), "mean": round(float(np.mean(x)), 3)}
 
 
-def narrate(unit_name, hours, n, ess, C, ivt_win, persistence, r_idx, rate, jet):
+def narrate(unit_name, hours, n, ess, C, ivt_win, persistence, r_idx, rate, jet, res=None):
     """Generated explanation sentence: counts over members, ESS always attached.
 
     Deliberately plain and quantitative — this is the 'translate/communicate' step the MLWP
@@ -401,6 +433,14 @@ def narrate(unit_name, hours, n, ess, C, ivt_win, persistence, r_idx, rate, jet)
         s += f"; Somali jet southerly in {n_jet} of {n}"
     s += (f". Ensemble spread has ESS ~ {ess:.1f} of {n}, so treat every count above as "
           f"roughly {ess:.0f} independent draws, not {n}.")
+    if res:
+        weak = [f"{node} {r['n_states_occupied']}/{r['n_states_defined']} states"
+                f"{' (cut through the density peak)' if r['flag'] == 'fragile' else ''}"
+                for node, r in res.items() if r["flag"] != "resolved"]
+        if weak:
+            s += (" State resolution is limited — " + "; ".join(weak) +
+                  " — so read the ranges and threshold counts above, not a multi-way "
+                  "state split (mrp_stability_test.py).")
     return s
 
 
@@ -540,6 +580,15 @@ def main():
             RO = states_RO(ro_mm, days)
             rate = total / days
 
+            # How much of each 4-state partition this ensemble actually resolves (see
+            # mrp_stability_test.py). Carried into the record so a fragile or degenerate
+            # split is visible in the product rather than discovered later.
+            resolution = {
+                "M": state_resolution(ivt_win, THRESH["ivt"], len(STATES["M"])),
+                "R": state_resolution(r_idx, THRESH["rgen"], len(STATES["R"])),
+                "P": state_resolution(rate, THRESH["tp_rate"], len(STATES["P"])),
+            }
+
             # ---- PRIMARY: the circulation explanation record ----
             explain["windows"][wname]["regions"][uid] = {
                 "name": uname, "n_cells": int(cells.sum()),
@@ -564,8 +613,9 @@ def main():
                 "precipitation_mm_day": {**dist(rate),
                                          "n_heavy": int((rate >= THRESH["tp_rate"][1]).sum()),
                                          "wet_step_frac_mean": round(float(wetfrac.mean()), 3)},
+                "state_resolution": resolution,
                 "narrative": narrate(uname, w["hours"], n_mem, ess, C, ivt_win,
-                                     persistence, r_idx, rate, jet),
+                                     persistence, r_idx, rate, jet, resolution),
             }
 
             row = {
@@ -626,7 +676,7 @@ def main():
                     "MP_counts": mp_c, "MP_post": mp_p, "RP_counts": rp_c, "RP_post": rp_p,
                 })
 
-            print(f"  {uid:12s} ESS={ess:4.1f} | C={fractions(C,4).round(2).tolist()} "
+            print(f"  {uid:12s} ESS={ess:4.1f} | C={fractions(C,kC).round(2).tolist()} "
                   f"M={fractions(M,4).round(2).tolist()} P={fractions(P,4).round(2).tolist()} "
                   f"| tp={total.mean():5.1f}mm ro={ro_mm.mean():5.2f}mm")
 

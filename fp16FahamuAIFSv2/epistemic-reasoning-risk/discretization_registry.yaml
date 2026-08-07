@@ -124,7 +124,7 @@ process_loci:
                   SUPERSEDES loc.circ.v1 (k=4); counts NEVER pool across the two ids."
     fields: ["z_500", "msl", "v_850"]
     method: "window-mean z_500 anomaly from the 50-member mean over the region -> whiten ->
-             k-means K=4 (one state per member, A1). Clusters are then ORDERED by a
+             k-means K=2 (one state per member, A1). Clusters are then ORDERED by a
              circulation-only index  idx = z(-msl_anom) + z(v_850 region-mean)  so the state
              labels are physically ordered and comparable within the cycle."
     baseline: "ensemble-mean-of-this-cycle"
@@ -216,6 +216,46 @@ process_loci:
     note: "The model DOES output runoff, contra the assumption that AIFS says nothing about
            catchment response. It is a bucket-scheme response with no routing and no real
            catchment — hence grade B and evidence-child, never the target itself."
+
+# --- State-resolution test (mrp_stability_test.py, artifact mrp_stability_20260730.json) ----
+# The k-regimes test forced the same question onto the threshold-defined nodes. Its ARI protocol
+# does NOT transfer: threshold states are a deterministic function of each member's own value,
+# so subsample re-labelling is trivially stable and measures nothing. Tested instead were
+# degeneracy, cut fragility (kernel density AT the cut / peak density), threshold sensitivity
+# (total-variation distance under +/-10% and +/-25% shifts of every cut by the ensemble spread)
+# and sampling error (bootstrap CI at n=50 and at n=ESS).
+#
+# RESULT over 3 regions x 2 lead windows on cycle-20260730_0000 — the 4-state partitions are
+# NOT resolved by this ensemble:
+#     M  1.33 of 4 states occupied on average (4 of 6 cases DEGENERATE, all members in one
+#        state); mean TVD@10% 0.06
+#     R  2.0 of 4 occupied; 4 of 6 cases FRAGILE; density-at-cut up to 0.99 (the cut lands on
+#        the distribution PEAK, with 11 of 50 members within 5% of the spread of it)
+#     P  2.0 of 4 occupied; 4 of 6 FRAGILE; density-at-cut up to 0.89
+#   At n_eff = ESS the 90% CI on a reported state fraction is 0.33-1.00 wide, i.e. a reported
+#   split is essentially unconstrained if members are treated as ~1-2 independent atmospheres.
+#
+# DECISION — thresholds are NOT re-tuned. Moving cuts into this cycle's density valleys is
+# precisely the threshold-re-tuning failure the critique names (C3): it would fit the partition
+# to one event and destroy cross-cycle comparability, which is the entire point of absolute
+# thresholds. Instead:
+#   1. every explanation record now carries a `state_resolution` block per node (occupancy,
+#      density-at-worst-cut, flag) and the narrative says so in words;
+#   2. the product LEADS with continuous ranges and named-threshold exceedance counts
+#      ("|IVT| 158-226, 0 of 50 above 250"), which are immune to this failure mode, and the
+#      multi-way state split is demoted to BN input;
+#   3. the real fix is a model climatology (Phase 4 / E4) so cuts sit at climatological
+#      percentiles — a fixed, non-event-specific reference. This test is the strongest argument
+#      yet for prioritising it.
+# The 4-state vocabularies are RETAINED as fixed contracts (a degenerate node is itself
+# information: "this cycle sits entirely in normal moisture supply"), and the ESS discount
+# already keeps their CPT rows wide.
+state_resolution_test:
+  id: "test.stateres.v1"
+  artifact: "mrp_stability_20260730.json"
+  applies_to: ["loc.moist.v1", "loc.rgenv.v1", "loc.precf.v1"]
+  verdict: "4-state partitions unresolved; ~1.3-2.0 states occupied; cuts often on the density
+            peak. Thresholds unchanged by design; records carry the fragility flag."
 
 # --- Explanation products (DIRECTION_EXPLANATION_FIRST.md) ---------------------------------
 # The PRIMARY output as of 2026-08-06: ensemble counts over circulation states, per region per

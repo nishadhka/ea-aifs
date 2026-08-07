@@ -186,6 +186,26 @@ the superseded `loc.circ.v1`. Artifact: `k_regimes_test_20260730.json`.
 The general lesson, which applies to the rest of the diagnostics: **any scheme that slices 50
 low-DOF members into many categories should be assumed guilty until stability-tested.**
 
+### …and M / R / P were then tested by that standard, and also failed
+
+`mrp_stability_test.py` (artifact `mrp_stability_20260730.json`). The ARI protocol does not
+transfer — threshold states are a deterministic function of each member's own value, so
+subsample re-labelling is trivially perfect and measures nothing. Tested instead for degeneracy,
+cut fragility (density *at* the cut ÷ peak density), threshold sensitivity and sampling error.
+**M occupies 1.33 of 4 states on average** (4 of 6 cases fully degenerate), **R and P occupy
+2.0 of 4**, and the cuts that fall inside the ensemble range sit almost on the density peak
+(up to 0.99, with 11 of 50 members within 5 % of the spread of the line).
+
+Thresholds were **not** re-tuned to fix this — that is the threshold-re-tuning failure (C3),
+which would fit the partition to one event and destroy cross-cycle comparability. Instead the
+records carry a `state_resolution` flag per node, the product leads with continuous ranges and
+named-threshold exceedance counts (immune to this failure mode), and the model climatology
+(E4) — which would place cuts at climatological percentiles — becomes the priority fix.
+
+**Net effect on this document:** the state tables above remain the fixed contract, but the
+4-way splits they define are mostly *not* resolvable on a single cycle. Read them as the BN's
+input vocabulary, not as claims the ensemble supports.
+
 ### The antecedent gap — the one structural problem neither document solves
 
 qd-1 is emphatic and right: *"AIFS-ENS forecast precipitation alone should not be used to infer

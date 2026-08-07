@@ -140,6 +140,50 @@ categories should be assumed guilty until stability-tested.**
 single case prefers k = 3. One case out of six does not overturn the aggregate, but it is the
 first place to look if the regional records start disagreeing.)*
 
+### …and the same standard, applied to M / R / P, went against us again
+
+`mrp_stability_test.py` (artifact `mrp_stability_20260730.json`). The k-test's protocol does
+**not** transfer, and saying why matters: circulation states are *fitted* to the members by
+k-means, so re-drawing members can change every label — that is what the ARI measured. M/R/P
+states come from **absolute thresholds**, so a member's state is a deterministic function of its
+own value; subsample re-labelling is trivially perfect and would produce a reassuring number
+with no content. Tested instead: degeneracy, cut fragility (kernel density *at* the cut ÷ peak
+density — the threshold analogue of a silhouette: a good cut sits in a valley, not through a
+peak), threshold sensitivity (TVD under ±10 %/±25 % shifts of every cut), and sampling error.
+
+| Node | mean states occupied (of 4) | verdicts over 6 cases |
+|---|---|---|
+| **M** moisture transport | **1.33** | 4 × DEGENERATE, 2 × FRAGILE |
+| **R** rainfall environment | 2.0 | 1 robust, 1 degenerate, 4 fragile |
+| **P** precipitation forcing | 2.0 | 1 robust, 1 degenerate, 4 fragile |
+
+Cuts that fall inside the ensemble range land almost exactly **on the density peak**
+(density-at-cut 0.99, 0.91, 0.89, 0.85, with 10–11 of 50 members within 5 % of the spread of the
+line). At `n_eff = ESS` the 90 % bootstrap CI on a reported state fraction is **0.33–1.00 wide**.
+
+**Decision — thresholds are NOT re-tuned.** Sliding cuts into this cycle's density valleys is
+exactly the threshold-re-tuning failure the critique names (C3): it fits the partition to one
+event and destroys the cross-cycle comparability that absolute thresholds exist to provide.
+Instead:
+
+1. every explanation record now carries a `state_resolution` block per node (occupancy,
+   density-at-worst-cut, flag), and the narrative says so in words;
+2. the product **leads with continuous ranges and named-threshold exceedance counts**
+   (*"|IVT| 158–226, 0 of 50 above 250"*) — a single named physical threshold with a count is
+   immune to this failure mode — and demotes the multi-way state split to BN input;
+3. the real fix is the **model climatology (E4)**, so cuts sit at climatological percentiles: a
+   fixed, non-event-specific reference. **This test is the strongest argument yet for moving E4
+   ahead of E2 in the work order.**
+
+The 4-state vocabularies stay as fixed contracts — a degenerate node is itself information
+(*"this cycle sits entirely in normal moisture supply"*) — and the ESS discount already keeps
+their CPT rows wide.
+
+**Taken together, the two tests say the same thing in two different ways: this ensemble supports
+statements about *where the distribution sits relative to named physical thresholds*, and does
+not support fine categorical partitions of any kind.** That is a real constraint on the
+explanation product, discovered before it was published rather than after.
+
 ---
 
 *Implemented by `s2s_bn_evidence_prep.py --explain-out` (primary path) with
