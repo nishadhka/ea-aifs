@@ -30,6 +30,8 @@ import datetime
 import json
 import os
 import time
+import urllib.error
+import urllib.request
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -59,8 +61,19 @@ MAX_WORKERS = int(os.environ.get("S3_PKL_MAX_WORKERS", "16"))
 
 S3_BUCKET = "ecmwf-forecasts"
 S3_REGION = "eu-central-1"
+GCS_BASE = "https://storage.googleapis.com/ecmwf-open-data"
 
-# ---------------------------------------------------------------- S3 fetch layer
+# Mirror to fetch from. Both serve byte-identical .grib2/.index objects (verified:
+# index bytes, message bytes and decoded values all match), so the offsets from
+# one mirror are valid against the other and only the transport differs.
+#
+# Note the earthkit-data/ecmwf-opendata path CANNOT use gcs: it merges many field
+# ranges into one combined "Range: bytes=a-b,c-d,..." header, and GCS rejects that
+# with 400 InvalidArgument ("Multiple ranges are not supported"). This script issues
+# one single-range request per field, which GCS serves normally (HTTP 206).
+SOURCE = "aws"
+
+# ---------------------------------------------------------------- fetch layer
 _obstore_cache = {}
 
 
@@ -70,7 +83,25 @@ def _get_store():
     return _obstore_cache["s"]
 
 
+def _http_get(url, offset=None, length=None, tries=8):
+    """Single-range (or whole-object) HTTP GET with backoff on 503 SlowDown."""
+    last = None
+    for i in range(tries):
+        try:
+            req = urllib.request.Request(url)
+            if offset is not None:
+                req.add_header("Range", f"bytes={offset}-{offset + length - 1}")
+            with urllib.request.urlopen(req, timeout=300) as r:
+                return r.read()
+        except Exception as e:                      # 503 SlowDown, resets, timeouts
+            last = e
+            time.sleep(min(2 ** i, 60))
+    raise RuntimeError(f"GET failed after {tries} tries: {url} ({last})")
+
+
 def fetch_range(key, offset, length):
+    if SOURCE == "gcs":
+        return _http_get(f"{GCS_BASE}/{key}", offset, length)
     try:
         return bytes(obs.get_range(_get_store(), key, start=offset, end=offset + length))
     except Exception:
@@ -81,8 +112,11 @@ def fetch_range(key, offset, length):
 def load_index(key):
     if key in _obstore_cache:
         return _obstore_cache[key]
-    fs = fsspec.filesystem("s3", anon=True)
-    raw = fs.cat_file(f"{S3_BUCKET}/{key}").decode()
+    if SOURCE == "gcs":
+        raw = _http_get(f"{GCS_BASE}/{key}").decode()
+    else:
+        fs = fsspec.filesystem("s3", anon=True)
+        raw = fs.cat_file(f"{S3_BUCKET}/{key}").decode()
     recs = [json.loads(ln) for ln in raw.splitlines() if ln.strip()]
     _obstore_cache[key] = recs
     return recs
@@ -306,15 +340,24 @@ if __name__ == "__main__":
     ap.add_argument("--date", default="20260806_0000")
     ap.add_argument("--member", type=int, default=25)
     ap.add_argument("--out", default=".")
+    ap.add_argument("--source", default="aws", choices=["aws", "gcs"],
+                    help="mirror to byte-range fetch from (default aws; gcs "
+                         "measured ~10x faster on this box, byte-identical data)")
+    ap.add_argument("--suffix", default="",
+                    help="appended to the output pkl name, e.g. --suffix _gcs")
     args = ap.parse_args()
+
+    SOURCE = args.source
 
     date = datetime.datetime.strptime(args.date, "%Y%m%d_%H%M")
     prev_date = date - datetime.timedelta(hours=6)
 
-    print(f"PROTOTYPE gribberish v2 | member {args.member} | t={date} t-6h={prev_date}")
+    print(f"PROTOTYPE gribberish v2 | member {args.member} | source={args.source} "
+          f"| t={date} t-6h={prev_date}")
     state, elapsed = process_member(args.member, date, prev_date)
     ok = verify(state)
-    out_pkl = os.path.join(args.out, f"proto_input_state_member_{args.member:03d}.pkl")
+    out_pkl = os.path.join(
+        args.out, f"proto_input_state_member_{args.member:03d}{args.suffix}.pkl")
     with open(out_pkl, "wb") as fh:
         pickle.dump(state, fh)
     print(f"\nRESULT: member {args.member} in {elapsed:.1f}s ({elapsed/60:.2f} min) -> {out_pkl} ({'OK' if ok else 'FAIL'})")
