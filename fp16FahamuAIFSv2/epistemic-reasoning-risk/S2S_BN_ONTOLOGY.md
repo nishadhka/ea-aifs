@@ -86,10 +86,41 @@ variables" invites a wrong inference. It has **11 wave fields plus `skt`**, and 
 
 **Checked for explicitly and ABSENT:** `sst`, `ci`/`siconc` (sea ice), `mld`, `sithick`,
 `ocu`/`ocv` (currents), `tos`, `zos`, `sos`. No subsurface, no ice, no circulation, no
-sea-surface height — **zero ocean state**. Nor is `sst` retrieved on the input side: the
-IFS-sourced init fetches `PARAM_SFC = [10u, 10v, 2d, 2t, msl, skt, sp, tcw, sd]` and the wave
-list, and nothing oceanic beyond them. This is why IOD/ENSO are unavailable *by construction*
-(§5 Stage 3) — an absent-variable problem, not a method or threshold problem.
+sea-surface height — **zero ocean state**. This is why IOD/ENSO are unavailable *by
+construction* (§5 Stage 3) — an absent-variable problem, not a method or threshold problem.
+
+#### The model card lists SST as prognostic; the shipped checkpoint has no such variable
+
+The HuggingFace card for `ecmwf/aifs-ens-2.0` lists **"Sea-surface temperature (SST) … Surface …
+Both (Prognostic)"** and does *not* list snow depth. The weights it ships say the opposite. Read
+directly from `aifs-ens-crps-2.0.ckpt` (the only `.ckpt` in the repo) via
+`anemoi.inference.checkpoint.Checkpoint`:
+
+| | Checkpoint | What we observe |
+|---|---|---|
+| input tensor variables | **121** = 107 prognostic + 5 static forcings (`lsm, z, slor, sdor, wmb`) + **9 computed at runtime** (`insolation`, `cos/sin_julian_day`, `cos/sin_local_time`, `cos/sin_latitude`, `cos/sin_longitude`) | input pickle supplies **112** = 107 + 5; anemoi computes the other 9 ✓ |
+| output tensor variables | **120** = 107 prognostic + 13 diagnostic (`100u,100v,cp,hcc,lcc,mcc,ro,sf,snowc,ssrd,strd,tcc,tp`) | store holds **120** ✓ |
+| any name matching `sst\|sea\|ocean\|tos\|surface_temp` | **NONE**, input or output | absent from store and input ✓ |
+| `sd` (snow depth) | present in **both** input and output | present ✓ |
+
+The arithmetic closes exactly on both sides, so **the pipeline is correct**: it supplies
+precisely the fields the checkpoint declares and receives precisely the 120 it emits. The
+discrepancy is between the **model card and the released weights** — snow depth occupies the
+surface slot the card gives to SST. *Why* they differ cannot be determined from here (the card
+may describe the operational AIFS-ENS, a pre-release configuration, or SST may have been
+dropped in favour of `skt` when the CRPS ensemble checkpoint was trained); it is worth raising
+with ECMWF, since a card listing a prognostic field the weights lack will mislead anyone
+building on it.
+
+Two side-confirmations fall out of the same read. **`wmb` is a static forcing** — consumed,
+never written, which is why it is absent from the store (previously inferred here, now
+confirmed). And the checkpoint declares exactly six **accumulations** (`cp, ro, sf, ssrd, strd,
+tp`), agreeing with the per-6h interval semantics measured empirically in §1 — metadata and
+measurement independently concur.
+
+**The consequence for IOD/ENSO is firmer than "we failed to fetch SST".** The model has no SST
+variable to emit under any name, so no configuration of this pipeline could produce one.
+External SST analysis (`loc.sstOISST.v1`) is the only route.
 
 Four traps for whoever builds the wave loci:
 
