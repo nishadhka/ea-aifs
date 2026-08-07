@@ -70,6 +70,51 @@ cannot *establish* one — enforced by a self-test asserting the posterior shift
 
 ---
 
+### The ocean fields are a *wave* model, not an ocean model — inventory and four traps
+
+Verified by enumerating the store directly (2026-08-07), because "AIFS-ENS v2 has ocean
+variables" invites a wrong inference. It has **11 wave fields plus `skt`**, and no ocean state:
+
+| Field | What it is | Verified range (one member/step) | Coverage |
+|---|---|---|---|
+| `swh` | significant wave height (m) | 0 – 9.75 | sea only |
+| `mwp` | mean wave period (s) | 0 – 24.8 | sea only |
+| `cdww` | drag coefficient with waves | 0.001 – 0.003 | sea only |
+| `cos_mwd`, `sin_mwd` | mean wave direction as components; `mwd = atan2(sin, cos)` → 0–360° | see trap 2 | sea only |
+| `h1012, h1214, h1417, h1721, h2125, h2530` | significant wave height per **period band** (10–12 … 25–30 s) | band means 0.89, 0.64, 0.65, 0.40, 0.10, 0.02 m | sea only |
+| `skt` | skin temperature (K) — the only SST-like quantity anywhere in the chain | 203.5 – 327.2 | **global** |
+
+**Checked for explicitly and ABSENT:** `sst`, `ci`/`siconc` (sea ice), `mld`, `sithick`,
+`ocu`/`ocv` (currents), `tos`, `zos`, `sos`. No subsurface, no ice, no circulation, no
+sea-surface height — **zero ocean state**. Nor is `sst` retrieved on the input side: the
+IFS-sourced init fetches `PARAM_SFC = [10u, 10v, 2d, 2t, msl, skt, sp, tcw, sd]` and the wave
+list, and nothing oceanic beyond them. This is why IOD/ENSO are unavailable *by construction*
+(§5 Stage 3) — an absent-variable problem, not a method or threshold problem.
+
+Four traps for whoever builds the wave loci:
+
+1. **`wmb` is in the input list but not in the store.** `PARAM_WAVE` fetches it; the output has
+   no such field, because model bathymetry is *static* — consumed, not predicted. The store
+   holds 11 wave fields, not 12. Any code iterating the input wave list will `KeyError`.
+2. **`cos_mwd`/`sin_mwd` are not normalised.** Values reach −2.2…+1.8 and −2.5…+1.9, and
+   `cos² + sin²` averages 0.994 rather than 1.0. Direction recovery via `atan2` still spans a
+   full 0–360°, but the pair violates the unit-circle constraint in places — raw ML output with
+   no physical constraint imposed. **Normalise before use**, and log the deviation from 1: it is
+   a free model-coherence diagnostic.
+3. **The wave mask is not the land mask.** Wave fields are NaN over 30.3 % of cells while
+   `finite(swvl1)` puts land at 31.7 %, and 4.7 % of land cells carry wave values. Mask with the
+   **wave field's own NaN**, never with the land mask, or coastal and lake cells leak in.
+4. **The period partitions are swell-only.** The bands begin at 10 s, so locally-generated
+   **wind-sea (< 10 s) is not partitioned** — it exists only inside the total `swh`. Wind-sea
+   must be inferred as `swh` minus the banded swell, which is an approximation, not a partition
+   the model provides. Any "wind-sea vs swell" locus rests on that approximation and must say so.
+
+What the wave fields *can* legitimately support: swell arrival timing at the East African coast,
+coastal-hazard statements, TC signatures via `swh` + `msl` minima, and a semi-independent check
+on the wind field. They integrate wind forcing over fetch and days, which is real information the
+instantaneous wind does not carry — but it is *wind-driven surface* information, with no basin
+heat content in it.
+
 ## 2. The DAG as implemented
 
 ```text
@@ -274,7 +319,10 @@ were counted or elicited, the evidence mode, and the seam note.
 **Stage 3 — background climate conditioning.** ENSO/IOD/MJO as **prior-conditioning on C**,
 per qd-1 — never arrows into the hazard. Note the correction from the critique (A4): the
 `skt`-based IOD/Niño index is *not* a good ensemble node, because AIFS has no ocean model, so
-the 50 members' SST spread is near-degenerate; these should enter as an **observed
+the `skt` dipole spread across members (0.32–0.39 K) is **as large as the signal it would have
+to detect** — measured 2026-08-07, correcting an earlier unverified claim here that the spread
+was "near-degenerate" — and the absolute west-minus-east gradient is dominated by climatology,
+so it cannot give IOD phase without a baseline. These should enter as an **observed
 boundary-condition node at initialization** (OISST), grade B, registry id already reserved.
 
 ---

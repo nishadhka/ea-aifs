@@ -78,9 +78,15 @@ AIFS output). If so it must be de-accumulated (step-differenced) before any wind
 
 **A4. `skt`-based IOD/Niño nodes are mis-typed.**
 AIFS-ENS has no ocean model; over ocean `skt` is essentially the initial SST persisted/weakly
-evolved. Consequences: (i) the 50-member spread on the IOD/Niño-3.4 boxes is near-degenerate, so
-"count members per state" produces a CPT column that is all-or-nothing — the ensemble machinery
-adds nothing; (ii) epistemically these are closer to **hard evidence observed at initialization**
+evolved. Consequences: (i) the box-mean `skt` is unusable as an IOD/Niño index — **corrected
+2026-08-07 by finally measuring it: the claim originally written here, that the member spread is
+"near-degenerate", is WRONG.** On `cycle-20260730_0000` the member sd of box-mean `skt` is
+0.18–0.26 K, and the member sd of the west-minus-east dipole is **0.32–0.39 K — as large as a
+weak IOD event (~0.4 K)** — ranging −1.30…+0.27 K across members. That spread is *atmospheric
+skin-temperature noise* (skin temperature responds to wind and radiation), not ocean-state
+information. The conclusion stands but for the opposite reason: the index is **swamped, not
+frozen**. Worse, the absolute west-minus-east difference is dominated by the **climatological**
+warm-pool gradient, so without an anomaly baseline it cannot indicate phase at all; (ii) epistemically these are closer to **hard evidence observed at initialization**
 (the analysis SST the model was handed) than to soft forecast evidence. They should enter as a
 single boundary-condition node with observational uncertainty, not as a member-counted locus.
 
