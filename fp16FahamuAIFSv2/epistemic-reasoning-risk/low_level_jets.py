@@ -50,10 +50,18 @@ UTC_OFFSET_H = 3          # East Africa Time, for the nocturnal (0300 local) sub
 
 
 def box_cells(ds, box):
+    """Wrap-aware box selection on the unstructured `values` axis.
+
+    Two traps handled: an eastern edge of exactly 360 would become 0 under a naive `% 360`
+    (selecting nothing — this silently emptied the St Helena box), and a box straddling the
+    prime meridian (e.g. 340->20) needs an OR, not an AND."""
     lat = ds["latitude"].values
     lon = ds["longitude"].values % 360.0
-    return ((lat >= box["lat"][0]) & (lat <= box["lat"][1]) &
-            (lon >= box["lon"][0] % 360) & (lon <= box["lon"][1] % 360))
+    lo0, lo1 = float(box["lon"][0]) % 360.0, float(box["lon"][1]) % 360.0
+    if lo1 == 0.0 and float(box["lon"][1]) != 0.0:
+        lo1 = 360.0                                    # 360 is the end of the range, not 0
+    inlon = (lon >= lo0) & (lon <= lo1) if lo0 <= lo1 else ((lon >= lo0) | (lon <= lo1))
+    return (lat >= box["lat"][0]) & (lat <= box["lat"][1]) & inlon
 
 
 def core_speed(ds, level, steps, cells, pct=95):

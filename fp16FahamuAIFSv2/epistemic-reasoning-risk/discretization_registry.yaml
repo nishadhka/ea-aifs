@@ -49,6 +49,28 @@ regions:
     lon: [34.5, 38.5]
     note: "Turkana channel — the gap between the Ethiopian and Kenyan highlands, near Lake
            Turkana / Marsabit."
+  TEJ_AFRICA:
+    id: "reg.TEJafr.v1"
+    lat: [0.0, 20.0]
+    lon: [30.0, 55.0]
+    note: "Tropical Easterly Jet, African sector — 200 hPa easterly core over the Horn/Sahel."
+  TEJ_INDIAN:
+    id: "reg.TEJind.v1"
+    lat: [5.0, 20.0]
+    lon: [55.0, 90.0]
+    note: "Tropical Easterly Jet, Indian Ocean sector — upstream of the African sector."
+  MASCARENE:
+    id: "reg.MASC.v1"
+    lat: [-35.0, -20.0]
+    lon: [45.0, 90.0]
+    note: "Mascarene High — SW Indian Ocean subtropical high; its strength and ridge position
+           set the cross-equatorial pressure gradient that drives the Somali jet."
+  ST_HELENA:
+    id: "reg.STHEL.v1"
+    lat: [-35.0, -20.0]
+    lon: [335.0, 360.0]
+    note: "St Helena High — South Atlantic subtropical high; drives the westerly Congo inflow.
+           Box stops at the prime meridian to avoid a longitude wrap."
   CONGO:
     id: "reg.CONGO.v1"
     lat: [-10.0, 5.0]
@@ -265,6 +287,37 @@ process_loci:
     reporting_rule: "counts above NAMED PHYSICAL thresholds, never a multi-way state split —
                      see state_resolution_test: this ensemble does not resolve fine
                      categorical partitions."
+
+  upper_jet_and_highs:
+    id: "loc.ujh.v1"
+    grade: "A"
+    node: "UJH (diagnostic, not a BN state node)"
+    role: "Tropical Easterly Jet and the two subtropical highs, by PHYSICAL thresholds — the
+           same recipe that worked for the low-level jets (localised feature + percentile
+           metric + absolute threshold), applied to the upper-level and boundary drivers."
+    tej:
+      boxes: ["reg.TEJafr.v1", "reg.TEJind.v1"]
+      level: 200
+      secondary_level: 150
+      metric: "core = 95th percentile of the EASTERLY component (-u) over the box, per member
+               per step. Not |V|: the TEJ is defined by easterly flow, so a speed magnitude
+               would score westerly outliers as jet."
+      thresholds_m_s: { present: 15.0, core: 25.0, strong: 35.0 }
+      direction_check: "easterly: box-mean u < 0"
+      season_note: "the TEJ is a boreal-summer (JJA) feature; a late-July/August cycle should
+                    show it, and its ABSENCE in a DJF cycle would be correct, not a failure."
+    subtropical_highs:
+      boxes: ["reg.MASC.v1", "reg.STHEL.v1"]
+      field: "msl"
+      metric: "central pressure = box MAX of msl (hPa) per member per step; the position of that
+               maximum (lat/lon) is reported as the ridge centre, and the area fraction above
+               1020 hPa as the extent."
+      thresholds_hPa: { present: 1020.0, strong: 1024.0, very_strong: 1028.0 }
+      why: "the Mascarene High sets the cross-equatorial gradient driving the Somali jet, and
+            St Helena drives the Congo westerly inflow — so these EXPLAIN the jets rather than
+            duplicating them, which is the point of adding them."
+    reporting_rule: "counts above NAMED PHYSICAL thresholds with ESS attached; positions as
+                     coordinates. Never a multi-way state split."
 
 # --- State-resolution test (mrp_stability_test.py, artifact mrp_stability_20260730.json) ----
 # The k-regimes test forced the same question onto the threshold-defined nodes. Its ARI protocol

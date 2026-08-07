@@ -180,10 +180,9 @@ def adm1_units(path, lon, lat, id_field, name_field):
 
 
 def box_unit(ds, box):
+    from low_level_jets import box_cells          # wrap-aware; see the note there
     lat = ds["latitude"].values
-    lon = ds["longitude"].values % 360.0
-    m = ((lat >= box["lat"][0]) & (lat <= box["lat"][1]) &
-         (lon >= box["lon"][0] % 360) & (lon <= box["lon"][1] % 360))
+    m = box_cells(ds, box)
     name = box.get("note", box["id"]).split(";")[0].split("—")[0].strip().rstrip(".")
     return [(box["id"], name, m)]
 

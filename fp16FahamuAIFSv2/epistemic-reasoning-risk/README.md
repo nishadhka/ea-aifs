@@ -119,6 +119,19 @@ opening argument actually proposes.
    circulation fields (1.3–1.9), so they may be the best-supported explanation locus available.
    Artifact: `low_level_jets_20260730.json`.
 
+11. **`upper_jet_and_highs.py`** + **`CROSS_CYCLE_FINDINGS.md`** — *does the recipe generalise,
+   and does anything replicate?* The jet recipe applied to the **Tropical Easterly Jet**
+   (`u_200`, p95 of the easterly component, 15/25/35 m/s) and the **Mascarene / St Helena
+   highs** (`msl`), then everything re-run on a **second cycle** (`20260723`).
+   **Replicates:** ESS 1.25–1.87 and PC1 75–89 %; k=4 unstable (ARI 0.565 vs 0.557); jets carry
+   2–4× the field ESS; the Somali jet's week-3→4/5 decay; and the Turkana nocturnal core at
+   **14.01 vs 14.04 m/s** on two independent cycles. **Weaker:** k=2 is *marginal* (0.688) on
+   the second cycle, not "stable" as the first suggested. **TEJ generalises** — thresholds
+   discriminate (16/50–50/50), and the Indian sector beats the African sector in all four cases,
+   which is the right physics and was never encoded. **Highs: strength saturates** (metric/
+   threshold mismatch, left un-retuned) **but ridge position is informative** — the ensemble
+   agrees on ridge latitude (sd 1.0–1.5°) and disagrees on longitude (sd 5.9–8.9°).
+
 **What the two tests jointly establish:** this ensemble supports statements about *where the
 distribution sits relative to named physical thresholds*, and does **not** support fine
 categorical partitions of any kind — clustered or threshold-defined.

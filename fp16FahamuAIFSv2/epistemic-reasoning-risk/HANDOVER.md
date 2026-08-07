@@ -53,7 +53,9 @@ the generative direction holds (we believe it does: `RO` hangs off `W` as a chil
 | `s2s_bn_evidence_prep.py` | **runs on real data**; primary path is now `--explain-out` |
 | `k_regimes_test.py` + `k_regimes_test_20260730.json` | **runs**; the stability test that moved production from k=4 to k=2 |
 | `mrp_stability_test.py` + `mrp_stability_20260730.json` | **runs**; the M/R/P state-resolution test — 4-state partitions unresolved |
-| `low_level_jets.py` + `low_level_jets_20260730.json` | **runs**; Somali/Turkana jets by physical core speed, replacing a weak index |
+| `low_level_jets.py` + `low_level_jets_2026072{3,30}.json` | **runs on both cycles**; Somali/Turkana jets by physical core speed |
+| `upper_jet_and_highs.py` + `upper_jet_and_highs_2026072{3,30}.json` | **runs on both cycles**; TEJ + Mascarene/St Helena highs |
+| `CROSS_CYCLE_FINDINGS.md` | what replicates on a second cycle and what does not — read alongside §5 |
 | `s2s_water_balance_bn.jl` | **never executed** (no Julia on this box); re-typed as downstream consumer |
 | `discretization_registry.yaml` | 0.1.0 → 0.2.0: `process_loci`, `blocked_loci`, circulation regions, `explanation_products` |
 | `README.md` | folder arc extended with items 5–7 |
