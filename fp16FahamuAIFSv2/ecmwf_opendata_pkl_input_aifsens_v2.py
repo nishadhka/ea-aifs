@@ -30,7 +30,20 @@ import numpy as np
 import earthkit.data as ekd
 import earthkit.regrid as ekr
 from google.cloud import storage
-# AWS S3 only - no ECMWF direct access
+
+# ecmwf-opendata mirrors (ecmwf/opendata/urls.py URLS). Only `aws` and `ecmwf`
+# actually work through THIS code path:
+#   aws    - works; slow here (1-3 Mbps, frequent 503 SlowDown)
+#   ecmwf  - works; the direct portal, capped at 500 simultaneous connections
+#   google - 400 InvalidArgument "Multiple ranges are not supported". Not a
+#            mirror fault: earthkit-data/ecmwf-opendata merges many field byte
+#            ranges into ONE combined "Range: bytes=a-b,c-d,..." header, which
+#            GCS rejects and S3 accepts. Verified 2026-08-06 that GCS serves the
+#            SAME bytes fine (HTTP 206) when asked one range at a time - see
+#            s3_grib_pkl/s3_grib_pkl_input_aifsens_v2_proto.py --source gcs,
+#            which is ~12x faster than aws on this box.
+#   azure  - broken (HTTP 409)
+OPENDATA_SOURCES = ["ecmwf", "aws", "google", "azure", "ecmwf-esuites"]
 
 # ---------------------------------------------------------------------------
 # v2.0 parameter lists (from run_AIFS_ENS_v2.0.ipynb)
@@ -216,6 +229,9 @@ def main():
                     help="ensemble members, e.g. '1-50', '1,5,10', '3' (default 1-50)")
     ap.add_argument("--gcs-subpath", default=GCS_SUBPATH,
                     help=f"GCS subfolder under the date (default {GCS_SUBPATH})")
+    ap.add_argument("--source", default="aws", choices=OPENDATA_SOURCES,
+                    help="ecmwf-open-data mirror (default aws). Only aws and "
+                         "ecmwf work here; google/azure fail - see OPENDATA_SOURCES")
     ap.add_argument("--no-upload", action="store_true", help="skip GCS upload")
     ap.add_argument("--keep-local", action="store_true",
                     help="keep local pkl files after upload")
@@ -238,14 +254,14 @@ def main():
 
     ekd.config.set({"cache-policy": "user"})
     os.makedirs(args.out_dir, exist_ok=True)
-    print(f"AIFS ENS v2.0 input prep (AWS S3 only) | init {DATE} | members {members[0]}-{members[-1]} | upload={upload}")
+    print(f"AIFS ENS v2.0 input prep (source={args.source}) | init {DATE} | members {members[0]}-{members[-1]} | upload={upload}")
 
     ok, fail, times = [], [], []
     for i, m in enumerate(members):
         print(f"\n{'='*60}\nMember {m} ({i+1}/{len(members)})\n{'='*60}")
         try:
             t0 = time.time()
-            state = create_input_state(DATE, m, source="aws")
+            state = create_input_state(DATE, m, source=args.source)
             if not verify_input_state(state, m):
                 fail.append(m)
                 continue
