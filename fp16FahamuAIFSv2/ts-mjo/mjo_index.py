@@ -13,19 +13,35 @@ Follows AI-WQ `training_data.html#mjo-data-processing` as far as this store allo
 then converts the 50 members into probabilities over the 9 AI-WQ categories
 (`forecast_evaluation.html#mjo-phase-probability-forecasts`).
 
-*** OLR LIMITATION - READ THIS ***
-The canonical RMM combines OLR, U850 and U200. This store carries **no `ttr`**
-(top net longwave) - only the surface fluxes `ssrd`/`strd` - so OLR cannot be
-derived from it. Two supported modes:
+*** THIS MODEL CANNOT PRODUCE THE MJO DIAGNOSTIC - READ THIS ***
 
-  --olr-source none  (default) : wind-only projection using the U850/U200 rows
-      of the EOFs. This is NOT the official RMM; it is a wind-only proxy and is
-      labelled as such in the output (`index_kind = "wind_only_proxy"`).
-  --olr-source FILE            : supply OLR on the same daily/longitude grid
-      (e.g. from ERA5 `ttr`, converted with olr = -ttr/3600) for the full
-      3-field projection (`index_kind = "rmm3"`).
+The RMM projects onto Wheeler & Hendon's *combined* EOFs: one state vector of
+3 x 144 = 432 elements, ordered [OLR, U850, U200], with `WH04_RMM_stddevs.nc`
+normalising the PCs that this specific basis yields.
 
-Add `ttr` to the inference output variable list to close this properly.
+AIFS-ENS-2.0 outputs 35 single-level variables, all surface. `ssrd`/`strd` are
+downward *surface* fluxes; there is no top-of-atmosphere term at all, so `ttr`
+is outside the checkpoint's output space and cannot be added by re-running
+inference. ERA5 cannot substitute either - the forecast days are in the future.
+
+**Dropping the OLR block and projecting the 288-element wind vector onto the
+remaining EOF rows is not a valid projection.** The truncated vector is not an
+EOF of the wind-only space: it is neither orthonormal there nor variance-
+maximising, so the resulting PCs are not RMM1/RMM2, the observed RMM standard
+deviations do not apply to them, and the `amplitude < 1` inactive test loses its
+meaning. Any phases from it are a loose analogue, not MJO phases.
+
+Modes:
+  --olr-source FILE  : full, valid 3-field projection (`index_kind = "rmm3"`).
+      Supply OLR on the same daily/144-longitude grid (from ERA5:
+      olr = -ttr / accumulation_seconds), or from a validated OLR emulator.
+  --olr-source none  : stops after the normalised band anomalies (steps 1-5).
+      Passing --allow-wind-only additionally emits the truncated-EOF index, but
+      it is written as `windproxy_*` and is NOT an MJO product.
+
+The only routes to a real submission are a validated OLR emulator fitted on the
+model's own convective proxies (`hcc`/`tcc`/`cp`/`tp`/`tcw`), or not submitting
+the MJO target.
 """
 from __future__ import annotations
 
@@ -95,7 +111,9 @@ def project(fields, eof1, eof2, sd1, sd2, use_olr):
     order = ["olr", "u850", "u200"] if use_olr else ["u850", "u200"]
     x = np.concatenate([fields[k] for k in order], axis=1)      # (ndays, nvar*144)
     if not use_olr and eof1.size == 3 * N_LON_BINS:
-        # drop the OLR block from the EOFs to match the wind-only state vector
+        # NOT a valid projection - the truncated vector is not an EOF of the
+        # wind-only space. Only reachable via --allow-wind-only; output is
+        # labelled windproxy_* so it can never pass as an MJO product.
         eof1 = eof1[N_LON_BINS:]
         eof2 = eof2[N_LON_BINS:]
     if x.shape[1] != eof1.size:
@@ -114,7 +132,11 @@ def main():
     ap.add_argument("--lowfreq", help=".npz preceding-120-day mean on the band grid")
     ap.add_argument("--eofs", help=".npz combined EOFs (see load_eofs)")
     ap.add_argument("--olr-source", default="none",
-                    help="'none' (wind-only proxy) or a .npz with daily OLR band data")
+                    help="a .npz with daily OLR band data for the valid 3-field "
+                         "RMM; 'none' (default) cannot produce an MJO product")
+    ap.add_argument("--allow-wind-only", action="store_true",
+                    help="emit the truncated-EOF wind index anyway. NOT an MJO "
+                         "product and not submittable - see module docstring")
     ap.add_argument("--out", default="mjo_probs.nc")
     ap.add_argument("--dump-bands", help="write the normalised band anomalies here (.npz)")
     args = ap.parse_args()
@@ -126,13 +148,17 @@ def main():
     times = sio.valid_times(g, init, steps)
     nmem = args.members or sio.n_members(g)
     use_olr = args.olr_source != "none"
-    kind = "rmm3" if use_olr else "wind_only_proxy"
+    kind = "rmm3" if use_olr else "windproxy_truncated_eof"
 
     print(f"MJO index | init {init:%Y-%m-%d} | members {nmem} | steps {len(steps)} "
           f"({times[0]:%Y-%m-%d} .. {times[-1]:%Y-%m-%d}) | kind={kind}")
     if not use_olr:
-        print("  !! no OLR: 'ttr' is absent from this store. Producing a WIND-ONLY "
-              "proxy, not the official RMM. See module docstring.")
+        print("  !! NO OLR. AIFS-ENS-2.0 has no top-of-atmosphere output, so the "
+              "RMM's 3-field combined-EOF projection cannot be formed.")
+        if not args.allow_wind_only:
+            print("     -> will stop after the band anomalies. Pass --olr-source "
+                  "FILE for a real RMM, or --allow-wind-only for a labelled, "
+                  "non-submittable wind index.")
 
     clim = np.load(args.clim) if args.clim else None
     lowf = np.load(args.lowfreq)["mean"] if args.lowfreq else None
@@ -158,7 +184,7 @@ def main():
             bands_dump = {k: v for k, v in fields.items()}
             bands_dump["dates"] = np.array([str(d) for d in dates])
 
-        if args.eofs:
+        if args.eofs and (use_olr or args.allow_wind_only):
             e1, e2, sd1, sd2 = load_eofs(args.eofs)
             r1, r2 = project(fields, e1, e2, sd1, sd2, use_olr)
             ph, amp = phase_from_pcs(r1, r2)
@@ -172,7 +198,14 @@ def main():
 
     if not args.eofs:
         print("\n  No --eofs given: stopped after the normalised band anomalies "
-              "(steps 1-5). Supply the observed combined EOFs to get RMM/phases.")
+              "(steps 1-5). Get WH04_combinedEOFs.nc / WH04_RMM_stddevs.nc via "
+              "AI_WQ_package.retrieve_MJO_projection_data(password).")
+        return
+    if not use_olr and not args.allow_wind_only:
+        print("\n  REFUSING to project without OLR: dropping the OLR block from a "
+              "combined EOF is not a valid projection, so the result would not be "
+              "RMM and must not be submitted. Band anomalies are still available "
+              "via --dump-bands.")
         return
 
     phase = np.stack(all_phase)                  # (member, day)
@@ -193,9 +226,10 @@ def main():
         probs[wi] /= phase.shape[0]
 
     import xarray as xr
+    pre = "MJO" if use_olr else "windproxy"
     ds = xr.Dataset(
         {
-            "MJO_phase_probability": (("week", "MJO_phase"), probs),
+            f"{pre}_phase_probability": (("week", "MJO_phase"), probs),
             "rmm1": (("member", "day"), pcs[:, 0, :]),
             "rmm2": (("member", "day"), pcs[:, 1, :]),
             "amplitude": (("member", "day"), amp),
@@ -210,8 +244,11 @@ def main():
         attrs={
             "index_kind": kind,
             "olr_available": str(use_olr),
-            "note": ("wind-only proxy: store has no ttr/OLR" if not use_olr
-                     else "full 3-field RMM"),
+            "note": ("full 3-field RMM" if use_olr else
+                     "NOT AN MJO PRODUCT: truncated-EOF wind index. AIFS-ENS-2.0 "
+                     "has no TOA output, so the combined-EOF projection cannot be "
+                     "formed; dropping the OLR block is not a valid projection."),
+            "submittable": "yes" if use_olr else "NO",
             "doy_climatology_removed": str(clim is not None),
             "lowfreq_120day_removed": str(lowf is not None),
             "norm_factors": json.dumps(NORM),

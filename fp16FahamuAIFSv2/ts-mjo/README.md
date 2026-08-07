@@ -44,26 +44,38 @@ of any kind. `ttr` is outside the checkpoint's output space, so it cannot be
 added by re-running inference. ERA5 cannot substitute either: the forecast days
 (18-33) are in the future, and ERA5 only covers dates already past.
 
-So `mjo_index.py` runs in one of two modes:
+**Wind-only is not a fallback - it is not a valid projection.** The RMM projects
+onto Wheeler & Hendon's *combined* EOFs: a single 3 x 144 = 432-element state
+vector ordered `[OLR, U850, U200]`, with `WH04_RMM_stddevs.nc` normalising the
+PCs *that basis* produces. Dropping the OLR block and projecting the 288-element
+wind vector onto what remains gives something that is not an EOF of the
+wind-only space - not orthonormal there, not variance-maximising - so its PCs are
+not RMM1/RMM2, the published standard deviations do not apply, and the
+`amplitude < 1` inactive test loses its meaning.
 
-- `--olr-source none` (default) - projects **wind-only**, and labels the output
-  `index_kind = "wind_only_proxy"`. This is **not** the official RMM and must not
-  be submitted as one.
-- `--olr-source FILE` - supply daily OLR already on the (days, 144) band grid,
-  giving the full 3-field projection (`index_kind = "rmm3"`). For *past* dates
-  that file can come from ERA5 (`olr = -ttr / accumulation_seconds`); for
-  forecast dates it can only come from a proxy - see option 2 below.
+`mjo_index.py` therefore **refuses** to project without OLR:
 
-**Way forward - three honest options:**
+- `--olr-source FILE` - the full, valid 3-field projection
+  (`index_kind = "rmm3"`, `submittable = yes`). For *past* dates that file can be
+  ERA5 (`olr = -ttr / accumulation_seconds`); for forecast dates only an emulator
+  can supply it.
+- `--olr-source none` (default) - stops after the normalised band anomalies
+  (steps 1-5) and says why. Adding `--allow-wind-only` emits the truncated-EOF
+  index anyway, but every variable is renamed `windproxy_*` and the file carries
+  `submittable = NO`, so it cannot be mistaken for an MJO product.
 
-1. **Wind-only index** (implemented). Cheapest; never label it RMM.
-2. **Statistical OLR proxy.** Tropical OLR is dominated by deep convection, and
-   the model does output `hcc`, `tcc`, `cp`, `tp`, `tcw`. Fit `ttr` on those
+**Way forward - only two honest options:**
+
+1. **Statistical OLR emulator.** Tropical OLR is dominated by deep convection,
+   and the model does output `hcc`, `tcc`, `cp`, `tp`, `tcw`. Fit `ttr` on those
    predictors in ERA5 (where both sides exist), apply to the forecast fields,
    then run the standard 3-field projection. This keeps the official EOF basis
-   and is the route most likely to score - but it is an emulator and must be
-   validated against ERA5-derived RMM before any submission.
-3. **Drop MJO** and submit only the targets this model can actually support.
+   intact - the only route that can yield a real RMM - but it is an emulator and
+   must be validated against ERA5-derived RMM before any submission.
+2. **Do not submit the MJO target**, and submit only what this model supports.
+
+The wind-only mode is *not* a third option: it is a diagnostic aid, kept for
+inspecting zonal wind structure, and is barred from producing an MJO file.
 
 ### 2. Both targets need external reference data
 
