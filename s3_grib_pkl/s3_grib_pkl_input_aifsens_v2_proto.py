@@ -270,7 +270,9 @@ def build_constants(idx_oper, gk_oper):
 
 
 # ---------------------------------------------------------------- per member
-def process_member(member, date, prev_date):
+def process_member(member, date, prev_date, const_fields=None):
+    """Build one member. `const_fields` (z/slor/sdor/lsm) are member-independent -
+    pass them in to reuse across members instead of re-fetching per member."""
     t0 = time.time()
     gk_t, ik_t = enfo_paths(date)
     gk_prev, ik_prev = enfo_paths(prev_date)
@@ -280,12 +282,14 @@ def process_member(member, date, prev_date):
     wgk_prev, wik_prev = waef_paths(prev_date)
     widx_t, widx_prev = load_index(wik_t), load_index(wik_prev)
 
-    gk_oper, ik_oper = oper_paths(date)
-    print("  constants (z/slor/sdor/lsm) from oper 0h ...")
-    const_fields = build_constants(load_index(ik_oper), gk_oper)
-    print(f"    {sorted(const_fields)} ({time.time()-t0:.1f}s elapsed)")
+    if const_fields is None:
+        gk_oper, ik_oper = oper_paths(date)
+        print("  constants (z/slor/sdor/lsm) from oper 0h ...")
+        const_fields = build_constants(load_index(ik_oper), gk_oper)
+        print(f"    {sorted(const_fields)} ({time.time()-t0:.1f}s elapsed)")
 
-    merged = dict(const_fields)
+    # copy: the lsm mask write below must not mutate the shared constants
+    merged = {k: v.copy() for k, v in const_fields.items()}
     groups = ["surface", "soil", "wave"] + [f"pl_{p}" for p in PARAM_PL]
     for g in groups:
         gt = time.time()
@@ -332,32 +336,90 @@ def verify(input_state):
     return not missing and not extra
 
 
+def parse_members(spec):
+    """'1-50', '1,5,10' or '3' -> sorted list of ints."""
+    out = set()
+    for part in str(spec).split(","):
+        part = part.strip()
+        if "-" in part:
+            a, b = part.split("-")
+            out.update(range(int(a), int(b) + 1))
+        elif part:
+            out.add(int(part))
+    return sorted(out)
+
+
 if __name__ == "__main__":
     import argparse
+    import gc
     import pickle
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", default="20260806_0000")
-    ap.add_argument("--member", type=int, default=25)
+    ap.add_argument("--member", type=int, help="single member (back-compat)")
+    ap.add_argument("--members", help="range/list, e.g. '1-50', '1,5,10'")
     ap.add_argument("--out", default=".")
     ap.add_argument("--source", default="aws", choices=["aws", "gcs"],
                     help="mirror to byte-range fetch from (default aws; gcs "
                          "measured ~10x faster on this box, byte-identical data)")
     ap.add_argument("--suffix", default="",
                     help="appended to the output pkl name, e.g. --suffix _gcs")
+    ap.add_argument("--skip-existing", action="store_true",
+                    help="skip members whose output pkl already exists")
     args = ap.parse_args()
 
     SOURCE = args.source
 
+    if args.members:
+        members = parse_members(args.members)
+    elif args.member is not None:
+        members = [args.member]
+    else:
+        members = [25]
+
     date = datetime.datetime.strptime(args.date, "%Y%m%d_%H%M")
     prev_date = date - datetime.timedelta(hours=6)
 
-    print(f"PROTOTYPE gribberish v2 | member {args.member} | source={args.source} "
-          f"| t={date} t-6h={prev_date}")
-    state, elapsed = process_member(args.member, date, prev_date)
-    ok = verify(state)
-    out_pkl = os.path.join(
-        args.out, f"proto_input_state_member_{args.member:03d}{args.suffix}.pkl")
-    with open(out_pkl, "wb") as fh:
-        pickle.dump(state, fh)
-    print(f"\nRESULT: member {args.member} in {elapsed:.1f}s ({elapsed/60:.2f} min) -> {out_pkl} ({'OK' if ok else 'FAIL'})")
+    print(f"PROTOTYPE gribberish v2 | members {members[0]}-{members[-1]} "
+          f"({len(members)}) | source={args.source} | t={date} t-6h={prev_date}")
+
+    # indexes + constants are member-independent: fetch once, reuse for all members
+    gk_oper, ik_oper = oper_paths(date)
+    t_const = time.time()
+    print("constants (z/slor/sdor/lsm) from oper 0h, shared across members ...")
+    const_fields = build_constants(load_index(ik_oper), gk_oper)
+    print(f"  {sorted(const_fields)} ({time.time()-t_const:.1f}s)")
+
+    ok, fail, times = [], [], []
+    t_all = time.time()
+    for i, m in enumerate(members):
+        out_pkl = os.path.join(
+            args.out, f"proto_input_state_member_{m:03d}{args.suffix}.pkl")
+        if args.skip_existing and os.path.exists(out_pkl):
+            print(f"\n[{i+1}/{len(members)}] member {m}: exists, skip")
+            ok.append(m)
+            continue
+        print(f"\n[{i+1}/{len(members)}] member {m}")
+        try:
+            state, elapsed = process_member(m, date, prev_date, const_fields)
+            good = verify(state)
+            with open(out_pkl, "wb") as fh:
+                pickle.dump(state, fh)
+            del state
+            gc.collect()
+            (ok if good else fail).append(m)
+            times.append(elapsed)
+            avg = sum(times) / len(times)
+            print(f"  {elapsed:.1f}s | avg {avg:.1f}s | "
+                  f"ETA {(len(members)-i-1)*avg/60:.1f} min -> {out_pkl}")
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"  member {m} FAILED: {e}")
+            fail.append(m)
+
+    dt = time.time() - t_all
+    print(f"\n{'='*60}\nDONE source={args.source}: {len(ok)}/{len(members)} ok"
+          + (f", failed {fail}" if fail else ""))
+    print(f"  total {dt/60:.1f} min ({dt/3600:.2f} h)"
+          + (f", avg {sum(times)/len(times):.1f}s/member" if times else ""))
