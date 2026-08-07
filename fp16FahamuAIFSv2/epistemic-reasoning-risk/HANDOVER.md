@@ -53,6 +53,7 @@ the generative direction holds (we believe it does: `RO` hangs off `W` as a chil
 | `s2s_bn_evidence_prep.py` | **runs on real data**; primary path is now `--explain-out` |
 | `k_regimes_test.py` + `k_regimes_test_20260730.json` | **runs**; the stability test that moved production from k=4 to k=2 |
 | `mrp_stability_test.py` + `mrp_stability_20260730.json` | **runs**; the M/R/P state-resolution test — 4-state partitions unresolved |
+| `low_level_jets.py` + `low_level_jets_20260730.json` | **runs**; Somali/Turkana jets by physical core speed, replacing a weak index |
 | `s2s_water_balance_bn.jl` | **never executed** (no Julia on this box); re-typed as downstream consumer |
 | `discretization_registry.yaml` | 0.1.0 → 0.2.0: `process_loci`, `blocked_loci`, circulation regions, `explanation_products` |
 | `README.md` | folder arc extended with items 5–7 |
@@ -197,6 +198,23 @@ re-typed as downstream and warns at runtime.
 8. **Moisture node degenerate at box scale** (all 50 members `normal`, region-mean IVT 157–230
    inside the 150–250 bin). We call it a scale artefact and refuse to re-tune the threshold to
    split the sample; you may reasonably say the threshold set is simply wrong for regional means.
+
+### 5.9 A defect found by challenge, not by us — the jet indices were weak
+
+Raised by the user, and correct. The original `loc.somalijet.v1` took a **mean of `v_850`** over
+a 15°×10° box and classified it **binary against the ensemble median**; the pipeline then
+reported `n_southerly = (v > 0).sum()`, i.e. a sign test. Three defects, all of which we had
+already diagnosed *elsewhere* and failed to apply here: a box mean dilutes a jet **core**; the
+meridional component is not the literature criterion (that is speed |V|); and an ensemble-median
+binary is a **rank**. Meanwhile the Turkana jet was registered `BLOCKED — needs orography`,
+which was simply wrong: a geographic box plus a speed threshold needs no orography at all, and
+only the *channelling attribution* does.
+
+Both are fixed in `low_level_jets.py` / `loc.llj.v1` with literature thresholds (Somali 15/25
+m/s at 850 hPa; Turkana 12/16.8/30 m/s at 925 hPa), a p95 core metric, direction checks and a
+nocturnal 0300-local subset. *For the reviewer:* are the boxes right (Somali 40–55E/5S–10N;
+Turkana 34.5–38.5E/1–6N), is p95-over-box the right core metric, and is 850 hPa the right level
+for a jet quoted at "1.0–1.5 km ASL"?
 
 ## 6. Every judgement number, in one place (attack these)
 

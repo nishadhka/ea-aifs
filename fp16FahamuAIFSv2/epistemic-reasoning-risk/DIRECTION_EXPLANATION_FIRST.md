@@ -86,6 +86,13 @@ generative direction of `NETWORK_DIRECTION.md`; and the whole BN, unchanged in m
 **E1 — Circulation record.** *Done in this commit.* Regime occupancy, |IVT| distribution and
 corridor-threshold exceedance counts, Somali-jet index, rainfall-environment components,
 precipitation-rate distribution, ESS, and a narrative sentence — per region per lead window.
+**E1b — Low-level jets by physical core speed.** *Done.* Somali/Findlater and Turkana, with
+literature thresholds, a p95-over-box core metric and a nocturnal 0300-local subset
+(`low_level_jets.py`). Worth noting for the roadmap: the jets carry **higher ESS (2.7–3.1 and
+6.3–7.0) than the regional circulation fields (1.3–1.9)** — members differ more in jet core
+time-series than in the broad z500 pattern, so **the jets may be the best-supported explanation
+locus this ensemble has**. (Caveat: the two ESS figures are computed over different feature
+spaces — jet time-series vs spatial maps — so treat the comparison as indicative.)
 **E2 — Regrid or spherical-harmonic step** → χ200, divergent circulation, MFC, vorticity. The
 blocker that now matters most.
 **E3 — Reduced full-window field set** → MJO propagation, corridor life-cycle from genesis.

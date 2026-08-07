@@ -280,15 +280,35 @@ def runoff(ds, steps, cells):
     return _region_step_mean(ds, "ro", steps, cells).sum(axis=1) * 1000.0
 
 
-def somali_jet(ds, steps):
-    """Cross-equatorial southerly index at 850 hPa, 40-55E / 5S-5N (loc.somalijet.v1).
+def low_level_jets(ds, steps, reg, n_mem):
+    """Somali (Findlater) and Turkana jets by PHYSICAL core speed — loc.llj.v1.
 
-    A FIXED geographic index, not a property of the analysis region — it describes the moisture
-    pump feeding the whole Horn, so it belongs to the lead window, not to a unit."""
-    lat = ds["latitude"].values
-    lon = ds["longitude"].values % 360.0
-    box = (lat >= -5) & (lat <= 5) & (lon >= 40) & (lon <= 55)
-    return _region_window_mean(ds, "v_850", steps, box), int(box.sum())
+    FIXED geographic indices, not properties of the analysis region: they describe the moisture
+    pump feeding the whole Horn, so they belong to the lead window, not to a unit.
+
+    Retires the old `loc.somalijet.v1` sign test (box MEAN of v_850, classified against the
+    ensemble median). A box mean dilutes a jet CORE, the meridional component is not the
+    literature criterion (that is speed |V|), and an ensemble-median binary is a RANK. Here the
+    core is the 95th percentile of |V| over the box and the thresholds are physical:
+    Somali 15/25 m/s at 850 hPa, Turkana 12/16.8/30 m/s at 925 hPa. See low_level_jets.py."""
+    from low_level_jets import box_cells, core_speed, summarise
+    llj = reg["process_loci"]["low_level_jets"]
+    hours = np.array([(t + 1) * 6 for t in steps])
+    noct = ((hours + 3) % 24 == 3)                    # 00 UTC == 0300 East Africa Time
+    out = {}
+    for jname, key, rkey, direction in (
+            ("somali_findlater", "somali_jet", "SOMALI_JET", ("v", "pos")),
+            ("turkana", "turkana_jet", "TURKANA", ("u", "neg"))):
+        spec, box = llj[key], reg["regions"][rkey]
+        cells = box_cells(ds, box)
+        core, mx, ubar, vbar = core_speed(ds, spec["level"], steps, cells)
+        thr = {k: float(v) for k, v in spec["thresholds_m_s"].items()}
+        rec = summarise(core, mx, ubar, vbar, thr,
+                        noct if jname == "turkana" else None, direction, n_mem)
+        rec.update({"box": box["id"], "level_hPa": spec["level"],
+                    "n_cells": int(cells.sum())})
+        out[jname] = rec
+    return out
 
 
 def soil_water(ds, step, cells):
@@ -420,7 +440,21 @@ def narrate(unit_name, hours, n, ess, C, ivt_win, persistence, r_idx, rate, jet,
     n_ar = int((ivt_win > THRESH["ivt"][1]).sum())
     n_supp = int((r_idx > THRESH["rgen"][1]).sum())
     n_heavy = int((rate >= THRESH["tp_rate"][1]).sum())
-    n_jet = int((jet > 0).sum()) if jet is not None else None
+    jet_txt = None
+    if jet:
+        bits = []
+        for jname, label, thr_key in (("somali_findlater", "Somali jet", "present_15.0m_s"),
+                                      ("turkana", "Turkana jet", "present_12.0m_s")):
+            r = jet.get(jname)
+            if not r:
+                continue
+            wm = r["core_speed_m_s"]["window_mean_of_core"]
+            t = r["threshold_counts"].get(thr_key, {})
+            bits.append(f"{label} core {wm['min']}-{wm['max']} m/s at {r['level_hPa']} hPa, "
+                        f"{t.get('n_members_reaching', 0)} of {n} above "
+                        f"{thr_key.split('_')[1]} for "
+                        f"{t.get('mean_duration_frac', 0)*100:.0f}% of steps")
+        jet_txt = "; ".join(bits) if bits else None
     s = (f"{unit_name}, hours {hours[0]}-{hours[1]}: "
          f"{n_top} of {n} members place the circulation in regime {k_top} "
          f"({STATES['C'][k_top].replace('_', ' ')}); "
@@ -429,8 +463,8 @@ def narrate(unit_name, hours, n, ess, C, ivt_win, persistence, r_idx, rate, jet,
          f"(mean duration above it {persistence.mean()*100:.0f}% of steps); "
          f"rainfall environment supportive in {n_supp} of {n}; "
          f"precipitation {rate.min():.2f}-{rate.max():.2f} mm/day, {n_heavy} of {n} heavy")
-    if n_jet is not None:
-        s += f"; Somali jet southerly in {n_jet} of {n}"
+    if jet_txt:
+        s += f"; {jet_txt}"
     s += (f". Ensemble spread has ESS ~ {ess:.1f} of {n}, so treat every count above as "
           f"roughly {ess:.0f} independent draws, not {n}.")
     if res:
@@ -543,12 +577,10 @@ def main():
         print(f"\n[{wname}] {w['id']} hours {w['hours']}: {len(steps)} steps "
               f"({(steps[0]+1)*6}-{(steps[-1]+1)*6} h)")
 
-        jet, jet_cells = somali_jet(ds, steps)          # fixed index, per window
+        jet = low_level_jets(ds, steps, reg, n_mem)     # fixed indices, per window
         explain["windows"][wname] = {
             "id": w["id"], "hours": w["hours"], "n_steps": len(steps), "days": round(days, 2),
-            "somali_jet": {**dist(jet), "n_southerly": int((jet > 0).sum()),
-                           "n_members": n_mem, "cells": jet_cells,
-                           "definition": "v_850 mean, 40-55E / 5S-5N (loc.somalijet.v1)"},
+            "low_level_jets": jet,
             "regions": {},
         }
 

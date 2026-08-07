@@ -104,6 +104,21 @@ opening argument actually proposes.
    the product leads with ranges and named-threshold exceedance counts, and the model
    climatology (E4) becomes the priority. Artifact: `mrp_stability_20260730.json`.
 
+10. **`low_level_jets.py`** — *the jets, done properly.* The earlier Somali index was weak and
+   the Turkana jet was wrongly written off. Both are now identified by **physical core speed**:
+   core = 95th percentile of |V| over the jet box (a percentile, so the core survives pooling),
+   with literature thresholds — Somali/Findlater **15 / 25 m/s at 850 hPa** (~1.5 km),
+   Turkana **12 / 16.8 / 30 m/s at 925 hPa** (~0.75 km) — plus a direction check and a
+   **nocturnal 0300-local** subset (the cycle is 00Z-initialised and East Africa is UTC+3, so
+   steps at lead hours divisible by 24 land exactly on the campaign hour). Result on
+   `cycle-20260730_0000`: Findlater core 14.7–21.5 m/s with **50/50 members above 15 m/s for
+   91 % of week-3 steps**, weakening to 63 % duration by weeks 4–5; Turkana core 10.5–13.2 m/s,
+   **50/50 above 12 m/s**, only **5/50** reaching the 16.8 m/s campaign core — and the model
+   reproduces the **nocturnal maximum** (core 14.0 m/s at 0300 local vs ~11.8 all-hours).
+   Notably the jets carry **higher ESS (2.7–3.1 Somali, 6.3–7.0 Turkana)** than the regional
+   circulation fields (1.3–1.9), so they may be the best-supported explanation locus available.
+   Artifact: `low_level_jets_20260730.json`.
+
 **What the two tests jointly establish:** this ensemble supports statements about *where the
 distribution sits relative to named physical thresholds*, and does **not** support fine
 categorical partitions of any kind — clustered or threshold-defined.

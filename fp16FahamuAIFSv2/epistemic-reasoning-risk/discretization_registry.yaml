@@ -38,6 +38,17 @@ regions:
     lon: [40.0, 70.0]
     note: "Western Indian Ocean — TC genesis region and southern-swell corridor toward the
            East-African coast."
+  SOMALI_JET:
+    id: "reg.SOMJET.v1"
+    lat: [-5.0, 10.0]
+    lon: [40.0, 55.0]
+    note: "Findlater / Somali jet corridor — cross-equatorial flow off the Somali coast."
+  TURKANA:
+    id: "reg.TURKANA.v1"
+    lat: [1.0, 6.0]
+    lon: [34.5, 38.5]
+    note: "Turkana channel — the gap between the Ethiopian and Kenyan highlands, near Lake
+           Turkana / Marsabit."
   CONGO:
     id: "reg.CONGO.v1"
     lat: [-10.0, 5.0]
@@ -217,6 +228,44 @@ process_loci:
            catchment response. It is a bucket-scheme response with no routing and no real
            catchment — hence grade B and evidence-child, never the target itself."
 
+  low_level_jets:
+    id: "loc.llj.v1"
+    grade: "A"
+    node: "LLJ (diagnostic, not a BN state node)"
+    role: "identify and classify the Somali (Findlater) and Turkana low-level jets by
+           PHYSICAL core wind speed, per member per lead window"
+    supersedes: "loc.somalijet.v1 — which used mean v_850 over a 15x10 deg box classified
+                 binary vs the ENSEMBLE MEDIAN. Three defects: (i) a box MEAN dilutes a jet
+                 CORE, the same scale artifact that made the moisture node degenerate;
+                 (ii) it used the meridional component only, while the literature criterion is
+                 wind SPEED |V|=sqrt(u^2+v^2); (iii) an ensemble-median binary is a RANK, the
+                 informationless definition this registry's header condemns."
+    metric: "core speed = 95th percentile of |V| over the box cells, per member per step
+             (a percentile, NOT a mean, so the core survives). Reported with the box max.
+             Duration = fraction of window steps with core speed above each threshold."
+    somali_jet:
+      box: "reg.SOMJET.v1"
+      level: 850          # ~1.5 km ASL — the Findlater core altitude (1.0-1.5 km)
+      secondary_level: 925
+      thresholds_m_s: { present: 15.0, strong: 25.0 }
+      direction_check: "cross-equatorial southerly: box-mean v > 0"
+      source: "Findlater jet: cross-equatorial winds 15-30 m/s at 1.0-1.5 km during the
+               summer monsoon regime."
+    turkana_jet:
+      box: "reg.TURKANA.v1"
+      level: 925          # ~0.75 km ASL — channel jet core sits low
+      secondary_level: 850
+      thresholds_m_s: { present: 12.0, typical_core: 16.8, extreme: 30.0 }
+      direction_check: "southeasterly-to-easterly channelling: box-mean u < 0"
+      nocturnal: "the Turkana jet peaks nocturnally (~0300 local). Local time is UTC+3 and the
+                  cycle is initialised 00Z, so steps whose lead hour is a multiple of 24 are
+                  00 UTC = 0300 LOCAL. Those steps are reported separately."
+      source: "Turkana jet: core generally >12 m/s, campaign nocturnal maxima ~16.8 m/s at
+               0300 local, extreme bursts 30-50 m/s."
+    reporting_rule: "counts above NAMED PHYSICAL thresholds, never a multi-way state split —
+                     see state_resolution_test: this ensemble does not resolve fine
+                     categorical partitions."
+
 # --- State-resolution test (mrp_stability_test.py, artifact mrp_stability_20260730.json) ----
 # The k-regimes test forced the same question onto the threshold-defined nodes. Its ARI protocol
 # does NOT transfer: threshold states are a deterministic function of each member's own value,
@@ -278,10 +327,13 @@ explanation_products:
 # is therefore a FIRST-CLASS blocker requiring a regrid or spherical-harmonic step, not a
 # registered absence.
 blocked_loci:
-  turkana_jet:
+  turkana_jet_channelling:
     id: "loc.turkanajet.v1"
-    status: "BLOCKED — needs orography (slor, sdor, z-surface). Those are INPUT constants and
-             are NOT written to the store (verified). Requires a static N320 constants file."
+    status: "PARTIALLY UNBLOCKED 2026-08-07. The earlier 'BLOCKED - needs orography' was too
+             pessimistic: identifying the jet by a geographic box + a physical speed threshold
+             needs no orography at all, and is now implemented as loc.llj.v1. What genuinely
+             still needs slor/sdor/z-surface (absent from the store, static file required) is
+             ATTRIBUTING the jet to terrain channelling and computing the gap geometry."
   moisture_flux_convergence:
     id: "loc.mfc.v1"
     status: "BLOCKED — divergence needs a spatial derivative; the store is on an UNSTRUCTURED
