@@ -61,9 +61,22 @@ python fp16FahamuAIFSv2/fp16_automate_aifs_gpu_pipeline_v2.py \
 
 - **Step 1 output:** `gs://aifs-aiquest-us-20251127/<date>_0000/input_v2/input_state_member_NNN.pkl`
   (kept separate from v1's `input/` so both versions coexist). Requires `coiled-data.json`
-  unless `--no-upload`. CPU only. The open-data mirror is **hardcoded to AWS S3** (there is
-  no `--source` flag): the direct `ecmwf` portal is throttled to 500 simultaneous
-  connections, so the routine always uses the **AWS S3** replica.
+  unless `--no-upload`. CPU only.
+
+  **Retrieval backend (`--fetch`).** The default is **`index`**: read the `.index`
+  sidecar, then fetch **one single byte range per field**, 16 concurrent
+  (`INDEX_MAX_WORKERS`), decoding with eccodes. It defaults to the **`google`**
+  mirror and needs neither `earthkit-data` nor `ecmwf-opendata`.
+  **50 members: 2.9 h (20260806) vs 14.5 h (20260730).**
+
+  `--fetch earthkit` keeps the original `earthkit.data.from_source("ecmwf-open-data")`
+  path as a fallback (`aws`/`ecmwf` only). It is slow because `ecmwf-opendata` merges a
+  param group's byte ranges into **one combined multi-range request** and runs the groups
+  serially — a single `503 SlowDown` loses the whole request and costs a 120 s backoff.
+  That batching is also why `--source google` fails on this path (GCS answers multi-range
+  GETs with `400 InvalidArgument`); the mirror itself is fine, and serves single-range
+  requests normally. Both backends produce **bit-identical** pkls (verified field-by-field
+  on 6 members across 2 dates and both mirrors).
 - **Step 2 output:** `gs://…/<date>_0000/fp16_v2_forecasts/aifs_ens_forecast_<date>_memberNNN_h*.grib`.
   Needs an Ampere+ GPU and the v2 software env (below).
 - **Steps 3–5:** reuse the `shared/` CLIs with the **`--v2`** flag (added for this model).
