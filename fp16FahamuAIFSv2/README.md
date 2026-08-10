@@ -35,7 +35,7 @@ timesteps. Constants (`lsm,z,slor,sdor`) are still fetched once and replicated.
 
 | Script | Step | Role |
 |--------|------|------|
-| `ecmwf_opendata_pkl_input_aifsens_v2.py` | 1 (CPU) | ECMWF Open Data → 112-field input-state pkl per member, upload to GCS |
+| `ecmwf_opendata_pkl_input_aifsens_v2.py` | 1 (CPU) | ECMWF Open Data → 112-field input-state pkl per member, upload to GCS. Two backends via `--fetch`: **`index`** (default — one byte range per field, 16 concurrent, eccodes, `google` mirror; ~5× faster) or `earthkit` (original `earthkit-data` path, `aws`/`ecmwf` only). Bit-identical output. |
 | `fp16_automate_aifs_gpu_pipeline_v2.py` | 2 (GPU) | Orchestrator: per-member download → FP16 inference → upload → cleanup. Loads `ecmwf/aifs-ens-2.0` once. |
 | `fp16_multi_run_AIFS_ENS_v2.py` | 2 (GPU) | AIFS-ENS-2.0 FP16 runner (`run_ensemble_member`), 72h-chunked GRIB. Imported by the orchestrator. |
 | `pytorch_profile_fp16_v2.py` | 2 (GPU) | VRAM profiler for aifs-ens-2.0 (FP16 + chunks); PyTorch CUDA memory snapshot. See *GPU Memory Profiling*. |
@@ -47,11 +47,16 @@ The 112-field set: 9 surface + 4 constants + 4 soil (`stl1/2`,`swvl1/2`) + 12 wa
 
 ```bash
 # --- Step 1: input prep (CPU / ETL machine) ---
-# Latest open-data date, all 50 members, upload to gs://…/<date>/input_v2/
-python fp16FahamuAIFSv2/ecmwf_opendata_pkl_input_aifsens_v2.py --members 1-50
-# Pin a date / subset / skip upload while testing:
+# All 50 members, upload to gs://…/<date>/input_v2/. --date is REQUIRED
+# (latest-date detection was removed); defaults to --fetch index --source google.
+python fp16FahamuAIFSv2/ecmwf_opendata_pkl_input_aifsens_v2.py \
+    --date 20260611 --members 1-50
+# Subset / skip upload while testing:
 python fp16FahamuAIFSv2/ecmwf_opendata_pkl_input_aifsens_v2.py \
     --date 20260611 --members 1 --no-upload --keep-local
+# Fall back to the original earthkit-data backend (aws/ecmwf only):
+python fp16FahamuAIFSv2/ecmwf_opendata_pkl_input_aifsens_v2.py \
+    --date 20260611 --members 1-50 --fetch earthkit --source aws
 
 # --- Step 2: GPU inference (Ampere+ GPU, v2 software env) ---
 python fp16FahamuAIFSv2/fp16_automate_aifs_gpu_pipeline_v2.py \
