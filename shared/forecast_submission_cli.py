@@ -63,7 +63,13 @@ def get_credentials(fp16: bool = False, v2: bool = False) -> Tuple[str, str, str
         Tuple of (team_name, model_name, password)
     """
     team_name = os.getenv('AIWQ_TEAM_NAME')
-    password = os.getenv('AIWQ_PASSWORD')
+    # ECBox era (AI-WQ >=3.28): for forecast start dates >= 2026-08-13 the AI-WQ package
+    # routes to ECBox and uses this value as the ECBox TOKEN (Authenticator.from_token),
+    # not the old FTP password. Prefer the token; fall back to the FTP password for
+    # pre-cutover dates. Accept the conventional name and the plain `ecbox` key.
+    password = (os.getenv('AIWQ_ECBOX_TOKEN')
+                or os.getenv('ecbox')
+                or os.getenv('AIWQ_PASSWORD'))
 
     # Select model name: v2 > fp16 > default
     if v2:
