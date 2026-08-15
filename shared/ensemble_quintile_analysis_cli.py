@@ -115,7 +115,7 @@ def get_quintile_clim(forecast_date: str, variable: str, password: Optional[str]
                 time.sleep(2)
 
             # local_destination is a DIRECTORY -> AI_WQ writes {dest}/{var}_...nc
-            return retrieve_evaluation_data.retrieve_20yr_quintile_clim(
+            return retrieve_evaluation_data.retrieve_20yr_quantile_clim(
                 date_str, var, password=password,
                 local_destination=(dest.rstrip('/') if dest else None)
             )
