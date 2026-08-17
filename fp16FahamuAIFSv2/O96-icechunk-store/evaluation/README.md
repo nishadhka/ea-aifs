@@ -12,6 +12,10 @@ to answer a question once, not to be a reusable library. The reusable pieces are
 | `cmp_submissions.py` | how much does the submitted quintile file move? | modal quintile changes at 4.3 % (`msl`), 13.4 % (`2t`), 19.0 % (`tp`) of gridpoints |
 | `quintile_yardstick.py` | is that a lot? compares against a 50-member bootstrap | **every O96 number is inside the ensemble's own sampling noise** |
 | `bench_regrid_forms.py` | batched vs per-field sparse regrid | per-field is ~9-10× faster, bit-identical |
+| `list_regrid_matrices.py` | which archive grids are even reachable from N320? | **exactly one Gaussian target exists: O96** — N96 and 1.0° both dead-end |
+
+`list_regrid_matrices.py` is the one script here with no hardcoded paths — it just reads
+earthkit's matrix database, so it stays useful if earthkit ships new matrices later.
 
 `quintile_yardstick.py` re-implements the weekly aggregation and quintile counting from
 `shared/ensemble_quintile_analysis_cli.py`; it self-checks against the shipped

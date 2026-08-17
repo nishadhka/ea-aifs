@@ -82,7 +82,7 @@ and `earthkit-regrid` has no `1.0° → 1.5°` matrix to reach the AI-WQ grid fr
 
 ---
 
-## 1. Why O96 and not 1.0° regular lat/lon
+## 1. Why O96, and not 1.0° regular lat/lon or N96
 
 `O96` is an octahedral reduced Gaussian grid, 40,320 cells (~112 km), the same *kind*
 of grid as N320 — quasi-equal-area cells on an unstructured `values` axis. Three
@@ -97,8 +97,43 @@ things follow, and all three break on a 1.0° regular lat/lon grid:
 
 O96 is also 1.6× smaller than 1.0° for a comparable effective resolution.
 
-Verified on box: `earthkit.regrid.interpolate` has `N320 → O96`, `O96 → 1.5°`,
-`N320 → 1.5°`, `N320 → 1.0°` — but **not** `1.0° → 1.5°`.
+### Why not N96, or any other Gaussian grid — the real constraint is the FIRST hop
+
+Enumerating all 2,518 matrices in earthkit-regrid's database settles it. **From N320
+there are exactly 25 targets: 24 regular lat/lon grids, and exactly one Gaussian grid —
+`O96`.** The complete list of `reduced_gg → reduced_gg` matrices in the whole database
+is only ten pairs:
+
+```
+N1280 -> N320     N256 -> O1280    N256 -> O400     N320 -> O96      O1280 -> N320
+O1280 -> O96      O2560 -> O1280   O2560 -> O320    O2560 -> O48     O2560 -> O96
+```
+
+So `N96` is *not* the problem people expect. `N96` is well supported in general — 48
+matrices involve it, and **`N96 → 1.5°` exists** just as `O96 → 1.5°` does. The blocker
+is that **`N320 → N96` does not exist**, and neither does any route to it
+(`O96 → N96` is absent too). N96 is simply unreachable from the model grid.
+
+That also corrects the shape of the argument for the 1.0° option: there the blocker
+genuinely *is* the second hop (`N320 → 1.0°` exists, `1.0° → 1.5°` does not). Two
+different failures, one conclusion.
+
+And even if `N320 → N96` existed, O96 would still win — a "96" in each name does not mean
+the same point count, and the octahedral grid is the *smaller* of the two:
+
+| grid | family | points | full 120-var 50-member 132-step store |
+|---|---|---|---|
+| N320 | classic reduced Gaussian | 542,080 | ~1259 GB |
+| **O96** | **octahedral** | **40,320** | **~94 GB** |
+| N96 | classic reduced Gaussian | 50,662 | ~118 GB |
+
+Same 96 latitude rows per hemisphere, but the classic reduction rule keeps 26 % more
+points than the octahedral `16 + 4i` rule. O96 is the smaller, the reachable, and the
+grid AIFS-ENS was pre-trained on.
+
+Building our own `N320 → N96` matrix was not considered: the whole point of using
+earthkit's matrix is that the archive is *bit-identical* to the interpolation the
+production 1.5° path already performs. A hand-rolled operator throws that away.
 
 ### O96 coordinates
 
