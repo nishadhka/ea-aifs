@@ -89,6 +89,39 @@ def pkl_path_for(member, input_dir):
     return os.path.join(input_dir, f"input_state_member_{member:03d}.pkl")
 
 
+# Cells on the ``values`` axis for each grid the runner can write. N320 is the native
+# model grid; O96 is the archive grid (see O96-icechunk-store/README.md).
+GRID_N_VALUES = {"n320": 542080, "o96": 40320}
+
+
+def store_values_axis(repo):
+    """Length of an existing store's ``values`` axis, or None if not initialised yet."""
+    import zarr
+    try:
+        root = zarr.open_group(repo.readonly_session("main").store, mode="r")
+        return int(root["latitude"].shape[0]) if "latitude" in root else None
+    except Exception:
+        return None
+
+
+def check_store_grid(repo, path, grid, label):
+    """Refuse to write one grid into a store that already holds another.
+
+    Without this the run loads the model and starts a rollout before failing deep in the
+    writer on a shape mismatch — and ``--skip-existing`` would probe the wrong grid.
+    """
+    have = store_values_axis(repo)
+    want = GRID_N_VALUES[grid]
+    if have is None or have == want:
+        return
+    other = next((g.upper() for g, n in GRID_N_VALUES.items() if n == have),
+                 f"{have}-cell")
+    raise SystemExit(
+        f"ERROR: the {label} store already holds a {other} grid ({have} values) but "
+        f"--grid {grid} writes {want}.\n       {path}\n"
+        f"       Point at a different path, or remove that store.")
+
+
 def fetch_pkl(member, input_dir, bucket, gcs_prefix, service_account_key):
     """Download one member's input pkl from GCS if not already present locally.
 
@@ -182,10 +215,15 @@ def run(date_str, members, input_dir, store_path, lead_time,
     repo = open_repo_local(store_path)
     native_repo = open_repo_local(native_store) if native_store else None
 
-    # The O96 regrid is the same sparse matrix earthkit uses, applied to a whole step's
-    # fields in one matmul (~109 ms/step vs ~1.1 s field by field) and bit-identical to
-    # it. At ~14 s per member against ~285 s of inference the corpus can be written
-    # coarse directly — see O96-icechunk-store/README.md.
+    # Fail before the model loads if a store already holds the other grid.
+    check_store_grid(repo, store_path, grid, "--store")
+    if native_repo is not None:
+        check_store_grid(native_repo, native_store, "n320", "--native-store")
+
+    # The O96 regrid is the same sparse matrix earthkit uses, applied FIELD BY FIELD
+    # (batching a whole step is ~9-10x slower — see O96-icechunk-store/README.md §4) and
+    # bit-identical to earthkit. ~25 ms per stored step, so the corpus can be written
+    # coarse directly off the rollout and N320 never reaches disk.
     if grid == "o96":
         import o96_grid
         regrid_fn = o96_grid.regrid_block

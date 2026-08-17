@@ -19,6 +19,7 @@ submission reproduced **bit-identically**.
 | `o96_grid.py` | the regrid — O96 cell coordinates, the earthkit matrix, and `regrid_block`. The one place the grid is defined. |
 | `transcode_n320_to_o96.py` | offline: convert an existing N320 store to O96, and cut the native N320 sidecar (`--native --vars msl,tp,2t`) |
 | `validate_o96_run.py` | acceptance check to run before deleting anything |
+| `test_writer_paths.py` | regression test: proves the live pipeline's default path is unchanged |
 | `evaluation/` | the analysis scripts behind every number quoted here |
 
 Two files in the **parent** directory were modified rather than copied here, because
@@ -28,6 +29,56 @@ they are the live pipeline and must not be forked:
   `--native-vars`. Defaults are unchanged.
 - `../icechunk_output.py` — `IcechunkMemberWriter` gained `regrid`, `var_filter` and
   chunk-aligned slab buffering. All no-ops under the current production config.
+
+### The changes are opt-in — nothing happens unless you ask for it
+
+| you want | flags | result |
+|---|---|---|
+| **the original N320 output** (default) | *none* — or `--grid n320` | byte-for-byte what the pipeline always wrote |
+| **N320 off, O96 only** (tier C) | `--grid o96` | one O96 store, ~45 GB, no N320 anywhere |
+| **O96 + the AI-WQ sidecar** (tier B, adopted) | `--grid o96 --native-store PATH` | O96 corpus + 12 GB N320 store for `msl,tp,2t` |
+
+`--grid` defaults to `n320`, so an existing command line behaves exactly as before. The
+new code is only reachable through these flags: with `--grid n320` and no
+`--native-store`, `regrid` and `var_filter` are both `None` and the writer takes the
+same branch it always did.
+
+That claim is testable rather than a promise — `test_writer_paths.py` replays real N320
+fields through the writer and asserts the default path reproduces the source
+byte-for-byte, with no chunk-write amplification:
+
+```bash
+PY=/tank/projects/micromamba/envs/aifs-gpu/bin/python
+$PY O96-icechunk-store/test_writer_paths.py
+# -> PASS — the live pipeline's default behaviour is unchanged
+```
+
+The runner also refuses to write one grid into a store that already holds the other,
+and it checks **before** loading the model rather than failing mid-rollout:
+
+```
+ERROR: the --store store already holds a N320 grid (542080 values) but --grid o96
+       writes 40320.
+```
+
+### The three grids, and what they are called
+
+Two different families are in play, which is why the second hop matters:
+
+| | family | GRIB `gridType` | earthkit spec | points | spacing |
+|---|---|---|---|---|---|
+| **N320** | classic **reduced Gaussian** | `reduced_gg` | `{"grid": "N320"}` | 542,080 | 320 latitude rows per hemisphere, rows unevenly spaced, points per row vary |
+| **O96** | **octahedral** reduced Gaussian | `reduced_gg` | `{"grid": "O96"}` | 40,320 | 96 rows per hemisphere, row *i* has `16+4i` points |
+| **1.5°** (AI-WQ) | **regular latitude/longitude** | `regular_ll` | `{"grid": [1.5, 1.5]}` | 29,040 | 121 × 240, evenly spaced — *not* Gaussian at all |
+
+So the AI-WQ target has no N-or-O style name; it is just a regular lat/lon grid given by
+its increment. `N` = classic reduced Gaussian, `O` = octahedral reduced Gaussian, and
+`F` (e.g. `F320`) would be a *full* Gaussian grid with every row the same length.
+
+Both Gaussian grids are quasi-equal-area on an unstructured `values` axis, which is why
+O96 substitutes for N320 without touching the store schema or any reader. A regular
+lat/lon archive would not: it over-weights high latitudes in an unweighted cell mean,
+and `earthkit-regrid` has no `1.0° → 1.5°` matrix to reach the AI-WQ grid from it.
 
 ---
 
