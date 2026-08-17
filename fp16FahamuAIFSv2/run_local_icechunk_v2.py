@@ -44,6 +44,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 # This script lives in the model subfolder; import the sibling modules directly.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# o96_grid lives in O96-icechunk-store/ (hyphens, so not importable as a package).
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "O96-icechunk-store"))
 
 # ---------------------------------------------------------------------------
 # Defaults
@@ -120,7 +123,7 @@ def run(date_str, members, input_dir, store_path, lead_time,
         num_chunks=INFERENCE_NUM_CHUNKS, float_size="f4", tag=True,
         commit_every=1, skip_existing=False, write_hours=None,
         gcs_fetch=False, bucket=None, gcs_prefix=None, service_account_key=None,
-        cleanup_pkl=False):
+        cleanup_pkl=False, grid="n320", native_store=None, native_vars=None):
 
     # VRAM knobs must be set before the model / CUDA context is created.
     os.environ["ANEMOI_INFERENCE_NUM_CHUNKS"] = str(num_chunks)
@@ -166,12 +169,29 @@ def run(date_str, members, input_dir, store_path, lead_time,
               f"({100*len(kept)/n_steps:.0f}%); others computed but not stored (NaN)")
     print(f"Member axis: 1..{n_members} in ONE store"
           + (" | skip already-written members (resume)" if skip_existing else ""))
+    if grid == "o96":
+        print(f"Grid:        N320 -> O96 regridded at write time (40,320 cells, "
+              f"~13.4x smaller); N320 never hits disk")
+    if native_store:
+        print(f"Sidecar:     {','.join(native_vars)} kept on native N320 -> {native_store}")
     if gcs_fetch:
         print(f"Input:       fetch from gs://{bucket}/{gcs_prefix}/ (prefetch next member)"
               + (" | delete pkl after each member" if cleanup_pkl else ""))
     print("=" * 70)
 
     repo = open_repo_local(store_path)
+    native_repo = open_repo_local(native_store) if native_store else None
+
+    # The O96 regrid is the same sparse matrix earthkit uses, applied to a whole step's
+    # fields in one matmul (~109 ms/step vs ~1.1 s field by field) and bit-identical to
+    # it. At ~14 s per member against ~285 s of inference the corpus can be written
+    # coarse directly — see O96-icechunk-store/README.md.
+    if grid == "o96":
+        import o96_grid
+        regrid_fn = o96_grid.regrid_block
+        o96_lats, o96_lons = o96_grid.o96_coords()
+    else:
+        regrid_fn = None
 
     print("\nLoading model ecmwf/aifs-ens-2.0 (FP16)...")
     t0 = time.time()
@@ -239,11 +259,13 @@ def run(date_str, members, input_dir, store_path, lead_time,
             continue
 
         # One-time schema init, from the first real state (var names/coords exact).
+        var_names = list(first["fields"].keys())
+        if grid == "o96":
+            lats, lons = o96_lats, o96_lons
+        else:
+            lats, lons = first["latitudes"], first["longitudes"]
+        n_values = len(lats)
         if not schema_exists(repo):
-            lats = first["latitudes"]
-            lons = first["longitudes"]
-            n_values = len(lats)
-            var_names = list(first["fields"].keys())
             print(f"    [SCHEMA] init {n_members}x{n_steps}x{n_values}, "
                   f"{len(var_names)} vars ({float_size}), time_chunk={commit_every}")
             init_schema(repo, n_members=n_members, n_steps=n_steps,
@@ -251,9 +273,22 @@ def run(date_str, members, input_dir, store_path, lead_time,
                         latitudes=lats, longitudes=lons,
                         ref_date=ref_date, timestep_s=TIME_STEP_HOURS * 3600,
                         float_size=float_size, time_chunk=commit_every)
+        if native_repo is not None and not schema_exists(native_repo):
+            print(f"    [SCHEMA] native sidecar {n_members}x{n_steps}x"
+                  f"{len(first['latitudes'])}, {len(native_vars)} vars")
+            init_schema(native_repo, n_members=n_members, n_steps=n_steps,
+                        n_values=len(first["latitudes"]), var_names=list(native_vars),
+                        latitudes=first["latitudes"], longitudes=first["longitudes"],
+                        ref_date=ref_date, timestep_s=TIME_STEP_HOURS * 3600,
+                        float_size=float_size, time_chunk=commit_every)
 
         writer = IcechunkMemberWriter(repo, member_index=member - 1,
-                                      member_number=member, commit_every=commit_every)
+                                      member_number=member, commit_every=commit_every,
+                                      regrid=regrid_fn)
+        native_writer = (IcechunkMemberWriter(
+            native_repo, member_index=member - 1, member_number=member,
+            commit_every=commit_every, var_filter=native_vars)
+            if native_repo is not None else None)
 
         # The rollout is autoregressive: every step must be COMPUTED. Steps outside the
         # write window are simply not stored (no chunks allocated -> read back as NaN).
@@ -262,6 +297,8 @@ def run(date_str, members, input_dir, store_path, lead_time,
             hour = step * TIME_STEP_HOURS
             if keep(hour):
                 writer.write_step(state, time_index=step - 1)   # keep ALL fields
+                if native_writer is not None:
+                    native_writer.write_step(state, time_index=step - 1)
             if step % 20 == 0:
                 print(f"    {hour}h / {lead_time}h "
                       f"(stored {writer.n}/{len(kept)}, {len(writer.snapshots)} commits)")
@@ -273,6 +310,8 @@ def run(date_str, members, input_dir, store_path, lead_time,
         if writer.n != len(kept):
             print(f"    [WARN] stored {writer.n} steps, expected {len(kept)}")
         snap = writer.finalize()                 # flush any uncommitted tail steps
+        if native_writer is not None:
+            native_writer.finalize()
         ok.append(member)
         print(f"    [OK] member {member:03d}: stored {writer.n}/{n_steps} steps, "
               f"{len(writer.snapshots)} commits (last {snap}) in {time.time() - m_t0:.1f}s")
@@ -357,6 +396,18 @@ def main():
     ap.add_argument("--cleanup-pkl", action="store_true",
                     help="delete each member's pkl after it is written (saves ~48 GB "
                          "over a 50-member run)")
+    ap.add_argument("--grid", default="n320", choices=["n320", "o96"],
+                    help="grid the store is written on. 'n320' (default) is the native "
+                         "model grid, ~583 GB/cycle for the 432-792 h window. 'o96' "
+                         "regrids each step in-flight to 40,320 cells (~47 GB) so the "
+                         "N320 corpus never lands on disk; costs ~14 s/member against "
+                         "~285 s of inference. See O96-icechunk-store/README.md.")
+    ap.add_argument("--native-store", default=None,
+                    help="also write --native-vars to a SECOND store on the native N320 "
+                         "grid. With --grid o96 this is tier B: the AI-WQ product stays "
+                         "bit-identical for ~13 GB while the 120-var corpus goes coarse.")
+    ap.add_argument("--native-vars", default="msl,tp,2t",
+                    help="variables for --native-store (default: the three AI-WQ ones)")
     args = ap.parse_args()
 
     gcs_prefix = args.gcs_input_prefix or f"{args.date}/input_v2"
@@ -374,7 +425,9 @@ def main():
              gcs_fetch=args.gcs_fetch, bucket=args.bucket, gcs_prefix=gcs_prefix,
              service_account_key=os.path.abspath(args.service_account)
              if args.gcs_fetch else None,
-             cleanup_pkl=args.cleanup_pkl)
+             cleanup_pkl=args.cleanup_pkl, grid=args.grid,
+             native_store=args.native_store,
+             native_vars=[v.strip() for v in args.native_vars.split(",") if v.strip()])
     return 0 if ok else 1
 
 

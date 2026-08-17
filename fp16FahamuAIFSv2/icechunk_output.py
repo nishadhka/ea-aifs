@@ -156,15 +156,41 @@ class IcechunkMemberWriter:
     """
 
     def __init__(self, repo, member_index, member_number=None,
-                 commit_every=1, branch="main"):
+                 commit_every=1, branch="main", regrid=None, var_filter=None,
+                 time_chunk=None):
+        """``regrid`` maps a stacked ``(n_fields, n_src_values)`` block to
+        ``(n_fields, n_dst_values)`` — pass ``o96_grid.regrid_block`` to write an O96
+        store straight off the rollout. ``var_filter`` restricts which fields are
+        written (the tier-B N320 sidecar passes ``{"msl", "tp", "2t"}``). ``time_chunk``
+        is the store's time-chunk length; steps are buffered and flushed one whole chunk
+        at a time, because writing step by step into a multi-step chunk makes zarr
+        read-modify-write it once per step and Icechunk (copy-on-write) keeps every
+        version — measured at 4.9 GB instead of 1.1 GB for one member. Defaults to
+        ``commit_every``, which is what ``init_schema`` uses; at the production
+        ``commit_every=1`` a chunk is one step and buffering is a no-op.
+        """
         self.repo = repo
         self.branch = branch
         self.m = int(member_index)
         self.member_number = int(member_number) if member_number is not None else self.m + 1
         self.commit_every = max(1, int(commit_every))
+        self.regrid = regrid
+        self.var_filter = set(var_filter) if var_filter else None
+        self.time_chunk = max(1, int(time_chunk if time_chunk is not None
+                                     else self.commit_every))
+        if self.time_chunk > self.commit_every:
+            # A commit always flushes, so committing more often than the chunk length
+            # writes the same chunk once per commit -- the amplification the buffering
+            # exists to avoid. init_schema uses time_chunk == commit_every, so this only
+            # fires if the two were set apart by hand.
+            print(f"    [WARN] time_chunk={self.time_chunk} > commit_every="
+                  f"{self.commit_every}: each chunk will be rewritten "
+                  f"{self.time_chunk // self.commit_every}x. Set them equal.")
         self.n = 0                       # total steps WRITTEN this member
         self._since_commit = 0           # steps written since last commit
         self._pending = []               # absolute time indices in the open session
+        self._buf = {}                   # absolute time index -> {var: 1-D values}
+        self._buf_chunk = None           # which time chunk _buf belongs to
         self._var_names = None
         self.snapshots = []              # snapshot id per committed window
         self.last_index = None           # last absolute time index written
@@ -188,9 +214,24 @@ class IcechunkMemberWriter:
         """
         idx = self.n if time_index is None else int(time_index)
         fields = state["fields"]
-        for name, value in fields.items():
-            if name in self._var_names:
-                self.root[name][self.m, idx, :] = np.asarray(value).reshape(-1)
+        names = [n for n in fields
+                 if n in self._var_names
+                 and (self.var_filter is None or n in self.var_filter)]
+
+        if self.regrid is None:
+            values = {n: np.asarray(fields[n]).reshape(-1) for n in names}
+        else:
+            block = np.stack([np.asarray(fields[n]).reshape(-1) for n in names])
+            values = dict(zip(names, self.regrid(block)))
+
+        # Buffer until the step crosses into the next time chunk, so each chunk is
+        # written exactly once (see __init__).
+        chunk = idx // self.time_chunk
+        if self._buf and chunk != self._buf_chunk:
+            self._flush_buffer()
+        self._buf_chunk = chunk
+        self._buf[idx] = values
+
         self.n += 1
         self._since_commit += 1
         self._pending.append(idx)
@@ -198,10 +239,28 @@ class IcechunkMemberWriter:
         if self._since_commit >= self.commit_every:
             self._commit_window()
 
+    def _flush_buffer(self):
+        """Write the buffered chunk as one slab per variable."""
+        if not self._buf:
+            return
+        idxs = sorted(self._buf)
+        lo = self._buf_chunk * self.time_chunk
+        hi = min(lo + self.time_chunk, self.root[next(iter(self._buf[idxs[0]]))].shape[1])
+        contiguous = idxs == list(range(lo, hi))
+        for name in self._buf[idxs[0]]:
+            if contiguous:                          # whole chunk present -> one write
+                self.root[name][self.m, lo:hi, :] = np.stack(
+                    [self._buf[i][name] for i in idxs])
+            else:                                   # partial chunk (skipped steps)
+                for i in idxs:
+                    self.root[name][self.m, i, :] = self._buf[i][name]
+        self._buf = {}
+
     def _commit_window(self):
         """Commit the steps written since the last commit; reopen a fresh session."""
         if not self._pending:                      # nothing staged -> no empty commit
             return None
+        self._flush_buffer()
         first, last = self._pending[0], self._pending[-1]
         snap = self.session.commit(
             f"member {self.member_number:03d} steps {first:03d}-{last:03d}")
