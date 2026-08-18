@@ -56,6 +56,24 @@ Measured cutover, by bisection over the open-data indexes — exactly consistent
 | ERA5 on AWS (`s3://nsf-ncar-era5`) | ✗ | ✗ | ✗ | 8 streams, 754 keys checked — **zero** GRIB table-140 files |
 | NOAA GEFS-Wave / GFS-Wave (WW3) | ✗ | ✗ | ✗ | `SWELL 1/2/3` partitions; also no `cdww`/`wmb` |
 
+### The wave stream was stable for two years, then stepped on one day
+
+The `wave` (deterministic) param list, straight from the open-data indexes — independently
+reproduced with `Herbie(model="ifs", product="wave")` for 2024-03-01, which returns the
+same 5 params and the same 8 missing:
+
+| date | n | params |
+|---|---|---|
+| 2024-03-01 | 5 | `mp2 mwd mwp pp1d swh` |
+| 2025-03-01 | 5 | `mp2 mwd mwp pp1d swh` |
+| 2026-03-01 | 5 | `mp2 mwd mwp pp1d swh` |
+| 2026-05-12 | 5 | `mp2 mwd mwp pp1d swh` |
+| **2026-05-13** | **13** | **+ `cdww h1012 h1214 h1417 h1721 h2125 h2530 wmb`** |
+
+Two years unchanged, then a step change on exactly the Cy50r1 implementation date. There
+is no earlier date to fall back to and no partial availability to exploit — going further
+back does not help.
+
 Reproduce the open-data half of this table for any date:
 
 ```bash
