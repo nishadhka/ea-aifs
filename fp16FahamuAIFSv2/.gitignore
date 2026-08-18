@@ -1,5 +1,6 @@
 # Secrets / credentials — never commit
 .env
+.ecmwfapirc
 coiled-data.json
 
 # Generated ETL / submission outputs
