@@ -35,7 +35,7 @@ they are the live pipeline and must not be forked:
 | you want | flags | result |
 |---|---|---|
 | **the original N320 output** (default) | *none* — or `--grid n320` | byte-for-byte what the pipeline always wrote |
-| **N320 off, O96 only** (tier C) | `--grid o96` | one O96 store, ~45 GB, no N320 anywhere |
+| **N320 off, O96 only** (tier C) | `--grid o96` | one O96 store, ~97 GB for the full corpus, no N320 anywhere |
 | **O96 + the AI-WQ sidecar** (tier B, adopted) | `--grid o96 --native-store PATH` | O96 corpus + 12 GB N320 store for `msl,tp,2t` |
 
 `--grid` defaults to `n320`, so an existing command line behaves exactly as before. The
@@ -367,7 +367,7 @@ setsid nohup bash -c "cd $PWD; export HF_HOME=$HF_HOME; \
     --input-dir $BASE/input_states \
     --grid o96 --store $BASE/icechunk_o96 \
     --native-store $BASE/icechunk_n320_aiwq --native-vars msl,tp,2t \
-    --n-members 50 --commit-every 1 --float-size f4 --write-hours 432-792 --skip-existing" \
+    --n-members 50 --commit-every 1 --float-size f4 --skip-existing" \
   > /tank/projects/run_0820_all.log 2>&1 </dev/null &
 ```
 
@@ -379,8 +379,11 @@ $PY ../shared/aifs_n320_grib_1p5defg_nc_cli.py --date 20260820_0000 --members 1-
     --icechunk-tag cycle-20260820_0000 --output-dir $BASE/nc_1p5deg
 ```
 
-Drop `--write-hours 432-792` on the O96 store once you want the full 0–792 h corpus —
-that is what the space is for.
+**Do not pass `--write-hours` on an O96 store — always store the full 0–792 h corpus.**
+The 432–792 h window exists only because N320 made the full rollout unaffordable
+(583 GB for 46 % of the steps). At O96 the whole corpus is ~97 GB, so there is no reason
+to throw away hours 0–432 and no way to get them back short of re-running inference.
+The narrow window is an N320-era compromise; it should not be carried over.
 
 Defaults are unchanged: with no `--grid`/`--native-store` the runner writes exactly the
 N320 store it always did (regression-tested field by field).
@@ -421,7 +424,7 @@ $PY -u run_local_icechunk_v2.py --date <DATE>_0000 --members 1 --lead-time 792 \
     --input-dir $BASE/input_states \
     --grid o96 --store $BASE/icechunk_o96_smoke \
     --native-store $BASE/icechunk_n320_smoke --native-vars msl,tp,2t \
-    --n-members 50 --commit-every 1 --float-size f4 --write-hours 432-792 --no-tag
+    --n-members 50 --commit-every 1 --float-size f4 --no-tag
 
 $PY O96-icechunk-store/validate_o96_run.py \
     --o96 $BASE/icechunk_o96_smoke --sidecar $BASE/icechunk_n320_smoke --members 1
