@@ -170,7 +170,7 @@ class GRIBToNetCDFProcessor:
                  bucket: str = "aifs-aiquest-us-20251127", service_account: str = "coiled-data.json",
                  v2: bool = False, source: str = "grib", icechunk_store: str = None,
                  icechunk_tag: str = None, icechunk_branch: str = "main",
-                 output_dir: str = None):
+                 output_dir: str = None, source_grid: str = "n320"):
         """
         Initialize processor with configurable date, members, and precision mode.
 
@@ -225,6 +225,10 @@ class GRIBToNetCDFProcessor:
         self.source = source
         # If set, the per-member NetCDF is moved here and NOT deleted by cleanup.
         self.output_dir = output_dir
+        # Grid the Icechunk store is on. 'n320' is the native model grid (the default,
+        # and what the GRIB path always produced); 'o96' reads an O96 archive written by
+        # run_local_icechunk_v2.py --grid o96. earthkit ships both matrices to 1.5 deg.
+        self.source_grid = source_grid
         self.icechunk_store = icechunk_store
         self.icechunk_tag = icechunk_tag
         self.icechunk_branch = icechunk_branch
@@ -509,9 +513,10 @@ class GRIBToNetCDFProcessor:
         earthkit-regrid has no batch mode for N320 (a leading dim raises
         "matmul: dimension mismatch"), so callers loop per field.
         """
+        in_grid = {"n320": "N320", "o96": "O96"}[self.source_grid]
         return ekr.interpolate(
             np.asarray(values_1d, dtype="float64"),
-            {"grid": "N320"}, {"grid": [1.5, 1.5]},
+            {"grid": in_grid}, {"grid": [1.5, 1.5]},
         )
 
     def process_icechunk_to_netcdf(self, member: int) -> Optional[str]:
@@ -1003,6 +1008,10 @@ Examples:
     parser.add_argument('--icechunk-tag', default=None,
                        help='Read this immutable tag (recommended for reproducibility). '
                             'Beware a tag written by a partial run — see run_commands_*.md.')
+    parser.add_argument('--source-grid', choices=['n320', 'o96'], default='n320',
+                        help='grid the Icechunk store is on (default n320, the native '
+                             'model grid). Use o96 for a store written by '
+                             'run_local_icechunk_v2.py --grid o96.')
     parser.add_argument('--icechunk-branch', default='main',
                        help='Branch to read when no --icechunk-tag is given (default main)')
     parser.add_argument('--output-dir', default=None,
@@ -1034,6 +1043,7 @@ Examples:
             icechunk_store=args.icechunk_store,
             icechunk_tag=args.icechunk_tag,
             icechunk_branch=args.icechunk_branch,
+            source_grid=args.source_grid,
             output_dir=args.output_dir,
         )
         # Process just this one member. A fully-local icechunk run (no upload) never
