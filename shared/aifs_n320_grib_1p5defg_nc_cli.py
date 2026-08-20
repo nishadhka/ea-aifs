@@ -923,6 +923,9 @@ def _run_member_subprocess(member: int, args, base_workdir: str, slot=None):
             cmd += ['--icechunk-tag', args.icechunk_tag]
         if args.icechunk_branch and args.icechunk_branch != 'main':
             cmd += ['--icechunk-branch', args.icechunk_branch]
+        # Must be forwarded: each member runs as an isolated subprocess, so anything not
+        # rebuilt here silently reverts to its default in the child.
+        cmd += ['--source-grid', args.source_grid]
     if args.output_dir:
         cmd += ['--output-dir', args.output_dir]
     if args.fp16:
