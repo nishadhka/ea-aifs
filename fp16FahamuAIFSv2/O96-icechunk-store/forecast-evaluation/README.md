@@ -87,6 +87,8 @@ forecast accuracy.**
 | `evaluate_cycle.sh` | the three steps end to end for one date |
 | `score_rpss.py` | RPSS + calibration and field diagnostics; `--json` for machine-readable output |
 | `evaluation_<DATE>.md` | one report per scored cycle: result, diagnostics, exact commands |
+| `compare_regrid_routes.py` | N320 vs O96 calibration on the same rollout |
+| [`regrid_impact_n320_vs_o96.md`](regrid_impact_n320_vs_o96.md) | **does the O96 hop cause the poor `tas` score? No — ~3 %** |
 
 ### Scored cycles
 
