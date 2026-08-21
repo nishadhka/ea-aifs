@@ -84,8 +84,14 @@ def main():
     args = ap.parse_args()
 
     src_repo = icechunk.Repository.open(icechunk.local_filesystem_storage(args.src))
-    sess = (src_repo.readonly_session(tag=args.src_tag) if args.src_tag
-            else src_repo.readonly_session(args.src_branch))
+    # fall back to the branch if the tag was tombstoned by a compaction
+    try:
+        sess = (src_repo.readonly_session(tag=args.src_tag) if args.src_tag
+                else src_repo.readonly_session(args.src_branch))
+    except Exception:
+        print(f"  NOTE tag {args.src_tag!r} not found; tags present: "
+              f"{sorted(src_repo.list_tags()) or 'none'} -> using branch {args.src_branch}")
+        sess = src_repo.readonly_session(args.src_branch)
     src = zarr.open_group(sess.store, mode="r")
 
     all_vars = [k for k in src.array_keys() if k not in COORD_ARRAYS]

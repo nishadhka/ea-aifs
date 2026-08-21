@@ -20,6 +20,7 @@ submission reproduced **bit-identically**.
 | `transcode_n320_to_o96.py` | offline: convert an existing N320 store to O96, and cut the native N320 sidecar (`--native --vars msl,tp,2t`) |
 | `validate_o96_run.py` | acceptance check to run before deleting anything |
 | `test_writer_paths.py` | regression test: proves the live pipeline's default path is unchanged |
+| [`MANIFEST_COMPACTION.md`](MANIFEST_COMPACTION.md) | **why 57 GB of manifest indexes 792,000 chunks in 17 MB**, and how to reclaim it |
 | `forecast-evaluation/` | score a completed cycle's RPSS against AI-WQ observations, locally, no upload |
 | `evaluation/` | the analysis scripts behind every number quoted here |
 

@@ -488,9 +488,20 @@ class GRIBToNetCDFProcessor:
         repo = icechunk.Repository.open_or_create(
             icechunk.local_filesystem_storage(self.icechunk_store)
         )
+        # A compacted store has had its original tag tombstoned by expire+GC (see
+        # O96-icechunk-store/MANIFEST_COMPACTION.md), so fall back to the branch rather
+        # than failing. After compaction the branch tip IS the tagged snapshot, so this
+        # returns the same data -- but say so loudly rather than resolving silently.
         if self.icechunk_tag:
-            session = repo.readonly_session(tag=self.icechunk_tag)
-            where = f"tag={self.icechunk_tag}"
+            try:
+                session = repo.readonly_session(tag=self.icechunk_tag)
+                where = f"tag={self.icechunk_tag}"
+            except Exception:
+                have = sorted(repo.list_tags())
+                session = repo.readonly_session(self.icechunk_branch)
+                where = (f"branch={self.icechunk_branch} "
+                         f"(tag {self.icechunk_tag!r} absent; tags present: {have or 'none'})")
+                print(f"  ⚠️  tag {self.icechunk_tag!r} not found -> reading {where}")
         else:
             session = repo.readonly_session(self.icechunk_branch)
             where = f"branch={self.icechunk_branch}"

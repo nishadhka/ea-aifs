@@ -35,9 +35,20 @@ COORD_ARRAYS = ("latitude", "longitude", "time", "member")
 
 
 def open_store(path, tag=None):
+    """Open read-only at ``tag``, falling back to ``main`` if the tag is gone.
+
+    Compaction (expire + GC) tombstones the original cycle tag permanently, so a
+    compacted store legitimately has no ``cycle-<date>_0000``. Its branch tip is the same
+    snapshot, so the fallback is exact -- but it is reported, never silent.
+    """
     repo = icechunk.Repository.open(icechunk.local_filesystem_storage(path))
-    sess = repo.readonly_session(tag=tag) if tag else repo.readonly_session("main")
-    return repo, zarr.open_group(sess.store, mode="r")
+    if tag:
+        try:
+            return repo, zarr.open_group(repo.readonly_session(tag=tag).store, mode="r")
+        except Exception:
+            print(f"  NOTE tag {tag!r} not found; tags present: "
+                  f"{sorted(repo.list_tags()) or 'none'} -> falling back to branch main")
+    return repo, zarr.open_group(repo.readonly_session("main").store, mode="r")
 
 
 def parse_members(spec):
