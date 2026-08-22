@@ -13,37 +13,64 @@ code. **Nothing uploaded.**
 
 ## Result
 
+**Read the per-week rows, not the mean.** The AI-WQ leaderboard reports **week1**, so that
+is the row comparable to an official figure.
+
 | week | valid | tas | mslp | pr |
 |---|---|---|---|---|
-| week1 | 2026-07-27 | −0.035 | +0.023 | **+0.060** |
+| week1 | 2026-07-27 | −0.035 | +0.023 | +0.060 |
 | week2 | 2026-08-03 | −0.196 | +0.098 | +0.004 |
-| **mean** | | **−0.115** | **+0.060** | **+0.032** |
+| mean | | −0.115 | +0.060 | +0.032 |
 
-**Overall mean RPSS −0.008** — the first cycle to come out net *negative*.
+## This does NOT match the submitted forecast, and the gap is unresolved
 
-### Diagnostics
+20260709 was submitted operationally in July from the **N320** route. That store was
+deleted, so the O96 numbers above come from a **fresh inference run**, not a re-expression
+of what was submitted.
 
-| var | week | sharpness | hit-rate | reliability | bias | rmse | pattern-r |
-|---|---|---|---|---|---|---|---|
-| tas | 1 | 0.512 | 0.396 | −0.116 | +0.060 K | 1.96 K | 0.994 |
-| tas | 2 | 0.538 | 0.377 | −0.160 | −0.019 K | 1.83 K | 0.995 |
-| mslp | 1 | 0.442 | 0.269 | **−0.173** | +15.3 Pa | 439 Pa | 0.850 |
-| mslp | 2 | 0.474 | 0.312 | −0.162 | +31.1 Pa | 502 Pa | 0.846 |
-| pr | 1 | 0.389 | 0.317 | −0.073 | +0.50 mm | 22.7 mm | 0.684 |
-| pr | 2 | 0.397 | 0.295 | −0.102 | −0.48 mm | 26.3 mm | 0.629 |
+Official leaderboard (`12Fahamu / fp16FahamuAIFSv2`, week1), the surviving submission file
+rescored with `score_rpss.py`, and this O96 run:
 
-Biases stay negligible, so again this is calibration rather than a broken field.
+| week1 | tas | mslp | pr |
+|---|---|---|---|
+| **official leaderboard** | **0.071** | **0.055** | **0.106** |
+| submitted N320 file, rescored here | 0.0715 | 0.0549 | 0.1060 |
+| **this O96 run** | **−0.035** | **+0.023** | **+0.060** |
 
-**What is different here is `mslp`.** In the two earlier cycles `mslp` was the reliable
-variable — reliability −0.001 to −0.05, RPSS +0.13 to +0.23. Here it is **−0.17**, the
-worst reliability of any variable in any cycle scored so far, and its RPSS collapses to
-+0.06. Its sharpness rose (0.44–0.47 vs 0.41) while its hit-rate fell hard (0.27–0.31 vs
-0.37). So the ensemble became *more* confident about mid-latitude circulation in a week it
-was *less* right — the signature of a flow-dependent bad week, not a systematic defect.
+The middle row matters: **`score_rpss.py` reproduces the official score to three decimals**,
+so the scoring pipeline is validated against the real leaderboard. Whatever explains the
+third row, it is not the scorer.
 
-`pr` week1 (+0.060) is the best precipitation score across all three cycles, which points
-the same way: skill at days 18–33 is dominated by what the atmosphere happened to be doing,
-not by the configuration.
+**The O96 run is worse on all three variables** — tas by 0.106, pr by 0.046, mslp by 0.032.
+That is a large, one-directional gap and it is not explained away below.
+
+### What can and cannot be concluded
+
+The comparison confounds two changes at once: a different regrid route *and* a different
+stochastic draw (aifs-ens-2.0 is stochastic; re-running the same input gives a different
+forecast). Modal-quintile flip rates separate their scale:
+
+| var | regrid alone (20260813, one rollout, two routes) | regrid + different draw (this comparison) |
+|---|---|---|
+| tas | 13.4 % | 28.1 % |
+| **mslp** | **4.3 %** | **29.5 %** |
+| pr | 19.0 % | 40.0 % |
+
+`mslp` is the clearest: the regrid moves it 4.3 %, this comparison moves it 29.5 % — nearly
+7× more. So most of the movement here is the different draw, not the grid.
+
+That is an argument about *magnitude*, not a clean result. It does **not** show the grid is
+harmless, and the fact that all three variables moved the same direction is not what a pure
+draw effect would be expected to look like. Two possibilities remain open:
+
+* the gap is mostly an unlucky draw, and O96 costs little; or
+* the O96 route does cost real skill, on top of draw noise.
+
+**Nothing here distinguishes them.** The experiment that does is 20260813, which holds
+N320-derived and O96-derived products from *one* rollout and verifies **2026-08-31**.
+Scoring both then isolates the grid with no draw confound. Until that runs, treat the O96
+route as **unvalidated for skill**, and do not use these numbers to compare against
+leaderboard figures.
 
 ## All scored cycles
 
@@ -53,6 +80,11 @@ not by the configuration.
 | [20260514](evaluation_20260514.md) | operational | −0.167 | +0.233 | +0.005 | **+0.024** |
 | **20260709** | operational | −0.115 | +0.060 | +0.032 | **−0.008** |
 | 20260820 | operational | — | — | — | verifies 2026-09-14 |
+
+**All three cycles above are O96-route reruns, not the submitted forecasts**, and for
+20260709 the submitted N320 forecast scored +0.071/+0.055/+0.106 at week1 against this
+run's −0.035/+0.023/+0.060. Treat the table as internally comparable, not as skill
+estimates for what was submitted.
 
 Consistent across all three: **`tas` is always negative** (−0.07 to −0.17) and always the
 most over-confident variable (reliability −0.09 to −0.22). That is the one finding stable

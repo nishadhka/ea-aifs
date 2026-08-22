@@ -90,6 +90,21 @@ forecast accuracy.**
 | `compare_regrid_routes.py` | N320 vs O96 calibration on the same rollout |
 | [`regrid_impact_n320_vs_o96.md`](regrid_impact_n320_vs_o96.md) | **does the O96 hop cause the poor `tas` score? No — ~3 %** |
 
+### ⚠ These are O96-route reruns, not the submitted forecasts
+
+For **20260709** the submitted N320 forecast scored **+0.071 / +0.055 / +0.106** (tas /
+mslp / pr) at week1 on the official leaderboard, while the O96 rerun below scores
+**−0.035 / +0.023 / +0.060**. Worse on all three.
+
+`score_rpss.py` reproduces the official figure to three decimals when run on the submitted
+file, so the scorer is validated — the gap is in the forecast, not the scoring. It
+confounds a different regrid route with a different stochastic draw and **is not yet
+resolved**; see [evaluation_20260709.md](evaluation_20260709.md). The clean test is
+20260813, which holds both products from one rollout and verifies 2026-08-31.
+
+Until then the O96 route is **unvalidated for skill**. The leaderboard reports **week1**,
+so compare week1 rows, never the two-week mean.
+
 ### Scored cycles
 
 | cycle | inputs | tas | mslp | pr | overall |
