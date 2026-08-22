@@ -96,6 +96,8 @@ forecast accuracy.**
 |---|---|---|---|---|---|
 | [20260212](evaluation_20260212.md) | donor-sourced (pre-50r1) | −0.074 | +0.132 | +0.032 | **+0.030** |
 | [20260514](evaluation_20260514.md) | operational | −0.167 | +0.233 | +0.005 | **+0.024** |
+| [20260709](evaluation_20260709.md) | operational | −0.115 | +0.060 | +0.032 | **−0.008** |
+| 20260820 | operational | — | — | — | *verifies 2026-09-14* |
 
 Two cycles verifying against different weather — not a skill comparison. See the
 20260212 report for why the donor-sourced cycle scoring no worse is a weak claim.
