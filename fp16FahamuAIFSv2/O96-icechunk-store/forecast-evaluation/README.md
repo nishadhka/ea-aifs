@@ -92,6 +92,10 @@ forecast accuracy.**
 
 ### ⚠ These are O96-route reruns, not the submitted forecasts
 
+**Full analysis: [RPSS_LEADERBOARD_DISCREPANCY.md](RPSS_LEADERBOARD_DISCREPANCY.md)** —
+and `./settle_grid_question.sh` runs the experiment that resolves it, from 2026-08-31.
+
+
 For **20260709** the submitted N320 forecast scored **+0.071 / +0.055 / +0.106** (tas /
 mslp / pr) at week1 on the official leaderboard, while the O96 rerun below scores
 **−0.035 / +0.023 / +0.060**. Worse on all three.
