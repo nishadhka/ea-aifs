@@ -9,7 +9,9 @@ Builds the two AI Weather Quest **non-gridded** targets out of a per-cycle
 | Tropical storm days | [training_data#tropical-storm-days-data-processing](https://ecmwf-ai-weather-quest.readthedocs.io/en/latest/training_data.html#tropical-storm-days-data-processing) | [RPSS on terciles per basin](https://ecmwf-ai-weather-quest.readthedocs.io/en/latest/forecast_evaluation.html#tropical-storm-days-ts) | `ts_days.py` |
 
 `store_io.py` holds the shared store readers (written-step detection, valid
-times, basin masks, day/7-day-window grouping).
+times, basin masks, day/7-day-window grouping). `ts_tracks.py` holds the
+cyclone tracker `ts_days.py` counts with — centre detection, track linking, and
+the `(storm, day)` counting that matches AI-WQ's target.
 
 ```bash
 PY=/tank/projects/micromamba/envs/aifs-gpu/bin/python
@@ -86,7 +88,7 @@ Neither diagnostic is self-contained in a single forecast:
 | Observed combined EOFs + RMM sds (`--eofs`) | MJO step 6-7 | **`AI_WQ_package.retrieve_MJO_projection_data(password)`** -> `WH04_combinedEOFs.nc`, `WH04_RMM_stddevs.nc` | the projection basis is Wheeler & Hendon's, from observations |
 | ERA5 day-of-year climatology 1979-2025 (`--clim`) | MJO step 3 | build from ERA5 (**not distributed**) | anomalies are defined against observed climatology |
 | Preceding 120-day mean (`--lowfreq`) | MJO step 4 | ERA5 up to init + forecast days 1-17 | the filter reaches 120 days *before* each day; a 16-day window cannot contain it |
-| Tercile boundaries from a matching climatology (`--tercile-clim`) | TS days | **`AI_WQ_package.TS_processing.download_IBTRACS_compute_TStercile_climatology(date, ibtracs_file, savedir)`** — or build from IBTrACS with *this* detector | the package's version is built from **observed** IBTrACS counts; ours are proxy-detector counts, and the two only interchange if the detector is bias-corrected (see §"Can TS be submitted?") |
+| Tercile boundaries from a matching climatology (`--tercile-clim`) | TS days | **`AI_WQ_package.TS_processing.download_IBTRACS_compute_TStercile_climatology(date, ibtracs_file, savedir)`** — read the per-week files with `--aiwq-tercile-dir`, or build detector-native ones | the package's version is built from **observed** IBTrACS counts; ours are proxy-detector counts, and the two only interchange if the detector is bias-corrected (see §"Can TS be submitted?" §8) |
 
 The EOF blocker is therefore **already solved by the AI-WQ package** - use the
 distributed `WH04_combinedEOFs.nc` rather than computing EOFs from your own data
@@ -102,9 +104,9 @@ for *all* lead hours would close it at negligible cost (the tropical band is
 
 Without `--eofs`, `mjo_index.py` deliberately **stops after step 5** and writes
 the normalised band anomalies (`--dump-bands`) rather than inventing a basis.
-Without `--tercile-clim`, `ts_days.py` falls back to the ensemble's own terciles
-and prints a loud warning - those probabilities are self-referential and not
-submission-grade.
+Without `--tercile-clim` or `--aiwq-tercile-dir`, `ts_days.py` falls back to the
+ensemble's own terciles and prints a loud warning - those probabilities are
+self-referential and not submission-grade.
 
 ---
 
@@ -127,16 +129,46 @@ Verified on `cycle-20260730_0000`: 16 days x 144 bins, all bins populated
 ## Tropical storm days (`ts_days.py`)
 
 AI-WQ's observed diagnostic comes from **IBTrACS**, which a forecast obviously
-cannot use, so the storms must be detected in the model fields. The day/week
-logic is kept identical to the spec (a day counts once if any sub-daily record
-qualifies; daily flags summed over 7 days), with detection:
+cannot use, so the storms must be detected in the model fields. The target is
+the number of unique **`(storm, day)` pairs** in the week
+(`TS_processing.count_nstormdays`), so the detection must carry **storm
+identity** - two concurrent storms on one day are two storm days, and a week is
+not capped at 7. `ts_tracks.py` supplies that identity in three stages:
 
 ```
-sqrt(10u^2 + 10v^2) >= 17 m/s                      (--wind-threshold)
-  AND  msl <= basin-median msl - 5 hPa             (--msl-drop, a closed low)
-  AND  t300 >= same-latitude-band median + 0.5 K   (--warm-core, 0 disables)
-  AND  cyclonic zeta850 >= 1e-4 1/s                (--vorticity, 0 disables)
+1. candidates   cyclonic zeta850 >= 1e-4 1/s          (--vorticity, 0 disables)
+                AND msl <= latitude-band median - 5 hPa      (--msl-drop)
+2. centres      candidates reduced to discrete centres, deepest-first,
+                >= 500 km apart                      (--centre-separation)
+   each centre tested against ITS OWN surroundings:
+                msl(centre) <= annulus mean - 5 hPa          (--msl-drop)
+                T(200-500 hPa) within 200 km          (--core-radius)
+                  exceeds the annulus out to 800 km   (--env-radius)
+                  by >= 1.0 K                         (--warm-core, 0 disables)
+3. tracks       centres linked step-to-step, <= 25 m/s     (--max-translation)
+                tracks shorter than 24 h dropped      (--min-track-hours)
+   counted      unique (track, day) pairs whose centre is in the basin box and
+                whose max |V10| within 300 km (--wind-radius) >= 17 m/s
+                                                       (--wind-threshold)
 ```
+
+Two details matter more than the threshold values:
+
+**The wind is a neighbourhood maximum, not a co-located value.** IBTrACS
+`usa_wind` is the storm's maximum sustained wind, and in a resolved cyclone the
+eyewall is 30-100 km from the pressure minimum - so requiring wind, pressure,
+warmth and vorticity to co-occur at *one* gridpoint is unsatisfiable for a
+well-resolved storm and noise-driven for a marginal one.
+
+**The warm core is measured against the storm's own environment.** A
+single-level anomaly against a zonal or latitude-band reference does not
+separate a tropical cyclone from an extratropical one: a midlatitude low sitting
+in a warm airmass passes it. The core-minus-annulus contrast over the 200-500
+hPa layer is the standard discriminator, and switching to it is what removed the
+austral-winter over-trigger this file used to lead with (see below).
+
+Sub-TS records stay in the track and are excluded from the count, mirroring
+IBTrACS: a storm that weakens below 34 kt and re-intensifies is one storm.
 
 **Vorticity is derived, not read.** `vo` is not an AIFS-ENS-2.0 output, so
 `grid_ops.py` computes `zeta = 1/(a cos phi) [dv/dlambda - d(u cos phi)/dphi]`
@@ -148,47 +180,56 @@ physics: zonal means are O(1e-6) 1/s, and the deepest 1 % of `msl` carries
 +5.3e-5 1/s cyclonic vorticity while the highest 1 % carries -2.0e-5 1/s.
 The sign is hemisphere-corrected so one threshold means "cyclonic" in both.
 
-The warm-core reference is taken **within 2 deg latitude bands**, not over the
-whole basin: the boxes span 0-40 deg, where the upper-level temperature gradient
-would otherwise label every midlatitude low "cold" and every tropical system
-"warm" regardless of structure.
+The latitude-band median is still used, but only for the cheap *candidate* net
+in stage 1 (the boxes span 0-40 deg, where a whole-domain reference would label
+every midlatitude low deep and every tropical column warm). Every criterion that
+actually decides whether a centre is kept is local to the centre.
 
 The store's 6-hourly steps are coarser than IBTrACS' 3-hourly records; that can
 only miss short qualifying periods, never add them.
 
-### Detector caveat - measured, not hypothetical
+### Detector state - measured, not hypothetical
 
-It is a wind/pressure/warm-core proxy, **not a tracker**: no track continuity, no
-`vo` (absent from the store), and N320 under-resolves TC peak winds. Running it
-on `cycle-20260730_0000` (valid mid-late August) shows exactly the expected
-failure and the expected sensitivity:
+**Corrected 2026-08-23.** The detector previously described here was a
+point-wise proxy with no track continuity; it counted *days on which the basin
+contained a qualifying gridpoint*, a boolean capped at 7 per week, while the
+target counts unbounded `(storm, day)` pairs. It also required the wind maximum
+at the pressure minimum, and tested the warm core against a latitude-band
+median. All three are fixed above. What that changed, measured on the
+`20260820` N320 store, 50 members, verification weeks 2026-09-07 / 09-14:
 
-| filter | ATL | NWP | SWIO | SEIO |
-|---|---|---|---|---|
-| wind + msl only | 3.2 | 6.0 | 6.0 | 6.3 |
-| + warm core 0.5 K | 2.7 | 6.0 | 4.8 | 5.5 |
-| + warm core 2.0 K | 2.3 | 5.7 | 3.3 | 5.3 |
-| + warm core 4.0 K | 2.0 | 5.3 | 2.3 | 3.7 |
-| + **vorticity 1e-4** (warm core 0.5 K) | 2.4 | **5.8** | **3.0** | 4.2 |
+| | point-wise (old) | tracked (new) | observed IBTrACS |
+|---|---|---|---|
+| quantity | days with a hit, **max 7** | `(storm, day)` pairs, **unbounded** | `(storm, day)` pairs |
+| centres per step | n/a (58 candidate blobs) | **6.9** | - |
+| tracks per member | n/a | **18.3** (>= 24 h) | - |
+| ATL mean / week | 2.3, 2.6 | **1.9, 2.2** | 8.7, 8.9 |
+| NWP mean / week | 6.5, 6.0 (at the ceiling) | **10.3, 9.1** (range 0-22) | 5.8, 6.5 |
+| SWIO mean / week | 3.3, 2.8 | **0.6, 0.5** | 0.17, 0.15 |
+| SEIO mean / week | 3.3, 1.9 | **0.4, 0.3** | 0.00, 0.00 |
 
-(mean storm days, first week, first members.)
+Three things to read out of that table:
 
-**SWIO/SEIO are in austral winter and should be near zero**, so the un-tuned
-detector over-triggers on midlatitude systems reaching into the 0-40 deg S part
-of the boxes. Every filter behaves the way physics says it should: adding
-vorticity cuts SWIO 5.0 -> 3.0 and SEIO 5.8 -> 4.2 while leaving **NWP unchanged
-at 5.8** - the North-West Pacific is genuinely active in August, so a correct
-filter must *not* suppress it. Vorticity buys that separation more cheaply than
-the warm-core threshold, which only reaches it by being tightened to a level
-(+4 K) that starts eroding NWP too.
+**The austral-winter over-trigger is gone.** SWIO 3.3 -> 0.6 and SEIO 3.3 -> 0.4,
+against an observed climatology of ~0.15 and exactly 0. This was the headline
+failure of the old detector and the reason its thresholds were called
+"uncalibrated guesses". It was not a threshold problem: those basins were full
+of midlatitude lows that a latitude-band warm-core test cannot reject, and the
+core-vs-environment test rejects them.
 
-But SWIO at 3.0 is still well above the ~0 August climatology implies, so
-**the thresholds remain uncalibrated guesses**. They must be fitted against
-IBTrACS over many cycles - and the remaining error is most likely the missing
-piece rather than the threshold values: this is still a point-wise detector with
-no track continuity, so a single transient wind maximum satisfying all four
-tests on one 6-hourly step marks the whole day. Requiring a coherent centre to
-persist across consecutive steps is the next structural fix, not more tuning.
+**The ensemble can now express all three categories.** NWP spans 0-22 storm days
+across members, so `P(above)` is a forecast rather than an arithmetic
+impossibility. Under the old counter `P(above)` was 0.00 in both scored basins in
+both weeks because the observed upper tercile (7 and 8) was at or above the
+counter's own ceiling.
+
+**A per-basin amplitude bias remains, and it changes sign.** ATL runs ~4x below
+the observed climatology, NWP ~1.6x above. That is a real calibration gap - but
+it is a calibration gap, which is a different and far more tractable thing than
+the units mismatch it replaced. See "What would actually unblock it" below.
+
+The 6-hourly steps are still coarser than IBTrACS' 3-hourly records; that can
+only miss short qualifying periods, never add them.
 
 ---
 
@@ -196,9 +237,14 @@ persist across consecutive steps is the next structural fix, not more tuning.
 
 `ts_days_probs.nc`
 - `TS_tercile_probability` (week, basin, category) - below/near/above
-- `storm_days` (member, week, basin) - the raw per-member counts, always kept
-- `tercile_bounds` (basin, bound), plus detector settings and `tercile_source`
-  in the attributes
+- `storm_days` (member, week, basin) - the raw per-member `(storm, day)` counts,
+  always kept, and **not** capped at 7
+- `n_tracks` (member) - tracks surviving `--min-track-hours`, the sanity check
+  on whether the detector is finding cyclones or weather
+- `tercile_bounds` (**week**, basin, bound) - per verification week, because
+  AI-WQ's IBTrACS terciles are per week
+- attributes record every detector setting, `counts_quantity`, and
+  `tercile_source`
 
 `mjo_probs.nc` (only with `--eofs`)
 - `MJO_phase_probability` (week, MJO_phase=0..8)
@@ -338,7 +384,12 @@ the detector's climatological mean sits above the observed one, *every* forecast
 of ensemble skill recovers. Feeding `--tercile-clim` with the package's IBTrACS file
 without first measuring that offset would produce a confidently wrong submission.
 
-### 6. The bounded next step — **done 2026-08-23. Verdict: do not submit.**
+### 6. The bounded next step — **done 2026-08-23. Verdict then: do not submit.**
+
+> **Superseded in part by §8.** The units mismatch this section found has since been
+> fixed (the tracker in `ts_tracks.py`). What survives is the IBTrACS climatology it
+> built and the reason a submission built on the *old* counter would have been wrong.
+> Read §8 for the post-correction state.
 
 Run, with the AI-WQ package's own builder against IBTrACS `v04r01` (23 MB, NOAA/NCEI,
 downloaded to `/tank/projects/ibtracs/`):
@@ -371,8 +422,9 @@ for d in ('20260907','20260914'):
 so two concurrent hurricanes on the same day contribute **two** storm days. The quantity is
 *storm*-days summed across storms, and it is **unbounded**.
 
-`ts_days.py` counts **basin-days** — `by_day[day] = step_hit.any()`, a boolean per day,
-summed over 7. It is **capped at 7 by construction**.
+`ts_days.py` *then* counted **basin-days** — `by_day[day] = step_hit.any()`, a boolean per
+day, summed over 7. It was **capped at 7 by construction**. (Fixed in §8; the current
+counter is unbounded.)
 
 These are different quantities. No threshold tuning, and no bias correction, makes a
 0–7 counter comparable to a 0–28 one. The earlier framing in this file — "the detector is
@@ -419,9 +471,12 @@ structural fix" (as this file had it) to **a prerequisite for submitting at all*
 
 Only after step 4 shows comparable distributions does calibration become the question.
 
-A smaller gap to fix on the way: `--tercile-clim` expects an `.npz` with a `bounds`
+**All four were done on 2026-08-23 — see §8.**
+
+A smaller gap fixed on the way: `--tercile-clim` expected an `.npz` with a `bounds`
 `(basin, 2)` array applied to **all** weeks, while AI-WQ writes one `.nc` per valid week
-with dims `(tercile, basin)`. Per-week bounds and a reader for the official file.
+with dims `(tercile, basin)`. `--aiwq-tercile-dir` now reads the official files and
+`tercile_bounds` carries a `week` dimension.
 
 ### 7. A constraint worth knowing before planning this
 
@@ -434,6 +489,71 @@ hold all six variables over the *full* 0–792 h, which is tempting, but O96 is 
 under-resolves TC winds further than N320 already does — it would most likely move the bias,
 not remove it. **Untested; do not assume it substitutes.**
 
+### 8. The correction — **done 2026-08-23. `ts_tracks.py`.**
+
+The three defects §6 identified are fixed: the counter measures the right quantity, the
+wind test matches `usa_wind`'s semantics, and the warm-core test discriminates tropical
+from extratropical. Run:
+
+```bash
+$PY ts_days.py --store /tank/projects/aifs-run/20260820_0000/icechunk_v2 \
+    --tag cycle-20260820_0000 --init 20260820 \
+    --aiwq-tercile-dir /tank/projects/ibtracs/clim \
+    --out /tank/projects/aifs-run/20260820_0000/ts_days_probs_20260820_tracked.nc
+```
+
+~11 min for 50 members. 18.3 tracks/member survive the 24 h minimum, 6.9 centres per
+step — against 1090 raw and 234 surviving under the old warm-core test, whose ≥24 h
+population averaged **|lat| 32.6°**, i.e. midlatitude cyclones, not tropical ones. The
+tracked population sits at a median vmax of 25 m/s and yields 2–4 qualifying storms per
+basin per member, which is the right order for mid-September.
+
+Probabilities against the **official IBTrACS terciles**, 50 members:
+
+| week | basin | mean | range | terciles | P(below/near/above) |
+|---|---|---|---|---|---|
+| 09-07 | **ATL** | 1.9 | 0–10 | 6 / 11 | 0.92 / 0.08 / 0.00 |
+| 09-07 | **NWP** | 10.3 | 0–22 | 4 / 7 | 0.06 / 0.24 / **0.70** |
+| 09-07 | SWIO | 0.6 | 0–5 | 0 / 0 | 0.62 / 0.00 / 0.38 |
+| 09-07 | SEIO | 0.4 | 0–3 | 0 / 0 | 0.80 / 0.00 / 0.20 |
+| 09-14 | **ATL** | 2.2 | 0–11 | 5 / 12 | 0.86 / 0.14 / 0.00 |
+| 09-14 | **NWP** | 9.1 | 0–21 | 5 / 8 | 0.22 / 0.30 / **0.48** |
+| 09-14 | SWIO | 0.5 | 0–4 | 0 / 0 | 0.74 / 0.00 / 0.26 |
+| 09-14 | SEIO | 0.3 | 0–2 | 0 / 0 | 0.82 / 0.00 / 0.18 |
+
+#### Verdict: still do not submit — but for a different, smaller reason
+
+`P(above) = 0.00` in NWP was previously an arithmetic certainty; it is now 0.70 and 0.48,
+a genuine forecast from a distribution spanning 0–22. The structural blocker is gone.
+
+What remains is a **per-basin amplitude bias of opposite sign**: ATL runs ~4× below the
+observed climatology and NWP ~1.6× above. Fed the observed terciles, that pushes ATL to a
+near-deterministic "below normal" (0.92 / 0.86) — and since roughly two thirds of
+observed Atlantic weeks land at or above the lower tercile by construction, that is a
+confident forecast of the less likely outcome. RPSS in ATL would be strongly negative.
+One basin scoring badly is enough to make the submission a net loss.
+
+#### The remaining fix, named precisely
+
+The probabilities must come from terciles built **with this detector**, not from IBTrACS's
+agency-assigned intensities — that is what `--tercile-clim` was always for. A detector's
+own climatology absorbs its resolution bias; the observed one cannot.
+
+The ensemble cannot supply it: 50 members of one cycle over two weeks is 100 samples, the
+same sample size AI-WQ uses, but they share initial conditions and calendar weeks, so they
+are one draw, not a climatology. That is the `ENSEMBLE_SELF` path, correctly flagged as
+self-referential.
+
+**ERA5 is the right source.** At ~31 km it is close to N320's ~28 km, so the same tracker
+run over 20 years of 6-hourly ERA5 for the target calendar weeks would produce terciles
+carrying the same resolution bias as the forecast — which is exactly what makes them
+cancel. It needs `10u`, `10v`, `msl`, `t_200/300/500`, `u_850`, `v_850`, the same six-ish
+fields the store carries, and the tracker code runs unchanged given a `(time, values)`
+array. That is a bounded, well-defined job and the last thing standing between this and a
+submission.
+
+Until it exists, `--aiwq-tercile-dir` is a diagnostic, not a submission path.
+
 ---
 
 ## Not done
@@ -441,8 +561,11 @@ not remove it. **Untested; do not assume it substitutes.**
 - No `ttr` in the store, so no true RMM (see blocker 1).
 - No EOF / climatology / tercile reference files are bundled here - they are
   observational products and belong with the AI-WQ package data, not in this repo.
-- **The IBTrACS comparison has now been run (§6): the detector counts a different quantity
-  from AI-WQ, and a submission built on it would be systematically wrong.** A tracker with
-  storm identity is a prerequisite, not an improvement.
-- No track continuity, so the counter is capped at 7 while the target is unbounded.
-- Tested against `20260730` and `20260820`.
+- **Track continuity now exists (`ts_tracks.py`, §8)** — the counter measures unique
+  `(storm, day)` pairs, unbounded, matching AI-WQ. The units mismatch §6 found is fixed.
+- **Still not submittable**: a per-basin amplitude bias of opposite sign remains (ATL ~4×
+  low, NWP ~1.6× high) against the observed IBTrACS terciles. The single blocking piece is
+  a **detector-native climatology from ERA5** (§8) — nothing else is in the way.
+- The tracker is unvalidated against observed tracks: no cycle has been verified
+  storm-by-storm against IBTrACS positions, only distribution-against-climatology.
+- Tested against `20260730` (old detector) and `20260820` (both).
