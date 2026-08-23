@@ -3,9 +3,10 @@
 **Date:** 20260820 (Thursday) · **Members:** 1–50 · **Box:** local RTX 5000 Ada, 30 GB.
 **Outcome: ✅ two complete stores.** An O96 corpus (102 GB, 0–792 h, run 2026-08-21) and
 an **N320 store** (583 GB, 432–792 h, run 2026-08-22) with 3a/3b products on top of it.
-**Not submitted as of 2026-08-23 12:30 UTC.** The AI-WQ window for this cycle is
-`20260820 0000 UTC → 20260823 2359 UTC` (`check_fc_submission.check_forecast_data_window`:
-Thursday + 3 days), so 3c is still runnable today. Scoreable from **2026-09-14** either way.
+**Submitted 2026-08-23 17:04 UTC — 6/6 files, 0 failed**, from the **N320** store.
+The AI-WQ window for this cycle was `20260820 0000 UTC → 20260823 2359 UTC`
+(`check_fc_submission.check_forecast_data_window`: Thursday + 3 days); 3c finished with
+~7 h to spare. Scoreable from **2026-09-14**.
 
 > **The two stores are different forecasts.** aifs-ens-2.0 is stochastic, so the N320
 > rerun from the same pkls is a different realisation of the same ICs — not a recoding of
@@ -53,7 +54,7 @@ Step 1 is unchanged from [`run_commands_20260813.md`](run_commands_20260813.md).
 | **2N** | **N320 rerun** from the same pkls (2026-08-22) | **4 h 05 m** (09:35→13:40) → **287.6 s/member** | 583 GB, 50/50, 0 failed, tagged |
 | **3a** | regrid 432–792 h → 1.5° NetCDF (from N320) | **8.5 m** | 2.1 GB, 50/50, 0 failed |
 | **3b** | quintiles → AI-WQ NetCDF | **~2 m** | 6.7 MB |
-| 3c | live submit via ECBox | **not run** | window open until 2026-08-23 2359 UTC; ~1 h 10 m needed (~12 min/file × 6) |
+| **3c** | **live submit via ECBox** | **1 h 12 m** (15:52→17:04 UTC) → ~12 min/file | **6/6 submitted, 0 failed** |
 
 Step 2's total GPU time for 50 members is **~4 h 37 m**. Members in the resume pass were
 slower (~404 s vs ~291 s) because the source.coop upload of 20260212 was running
@@ -211,7 +212,8 @@ check that separates "benign orphan reclaim" from "GC ate live data".
 | `…/20260820_0000/icechunk_v2/` | **583 GB** | 122 vars × 50 members × **61/132 steps** (h432–792), tag `cycle-20260820_0000` |
 | `…/20260820_0000/nc_1p5deg/` | 2.1 GB | 50 × 1.5° NetCDF, **from the N320 store** |
 | `…/20260820_0000/aiwq/ensemble_quintile_probabilities_20260820_v2.nc` | 6.7 MB | the AI-WQ product |
-| `/tank/projects/{proto_gcs_20260820_all50,run_0820_n320,run_0820_3a,run_0820_3b}.log` | — | Step 1 / 2N / 3a / 3b logs |
+| ECBox `AI_Weather_Quest/forecast_submissions/20260820/` | 6 files | the submission — `{mslp,pr,tas}` × weeks 1–2 |
+| `/tank/projects/{proto_gcs_20260820_all50,run_0820_n320,run_0820_3a,run_0820_3b,run_0820_3c}.log` | — | Step 1 / 2N / 3a / 3b / 3c logs |
 
 Verification date for this cycle is **2026-09-14**; nothing here is scoreable before then.
 `icechunk_v2` has **not** been manifest-compacted — the N320 chunk payload dominates, so
@@ -290,6 +292,48 @@ Valid dates: 20260907, 20260914
 
 Climatology downloaded cleanly for both verification weeks over FTP — the
 `retrieve_20yr_quintile_clim → _quantile_clim` rename fix (`c8176ee`) holding.
+
+---
+
+## Step 3c — the submission (as run, 2026-08-23)
+
+```bash
+BASE=/tank/projects/aifs-run/20260820_0000
+PY=/tank/projects/micromamba/envs/aifs-gpu/bin/python
+
+# dry run first — 6/6 would submit, 0 failed
+$PY ../shared/forecast_submission_cli.py --date 20260820 --v2 --output-dir $BASE/aiwq --dry-run
+
+# live, detached: ~12 min/file over ECBox exceeds any foreground shell timeout
+setsid nohup bash -c "cd $PWD; \
+  $PY -u ../shared/forecast_submission_cli.py --date 20260820 --v2 --output-dir $BASE/aiwq" \
+  > /tank/projects/run_0820_3c.log 2>&1 < /dev/null &
+```
+
+```
+[1/6] mslp_week1 ✅   [3/6] pr_week1 ✅   [5/6] tas_week1 ✅
+[2/6] mslp_week2 ✅   [4/6] pr_week2 ✅   [6/6] tas_week2 ✅
+Successful: 6   Failed: 0
+```
+
+**The dry run does not exercise the transport.** It short-circuits before
+`AI_WQ_create_empty_dataarray`, so it proves neither the ECBox token nor the AI-WQ
+checks. What can be verified offline, without transmitting, is worth doing instead —
+all of this passed before launch:
+
+| check | how |
+|---|---|
+| window open | `check_fc_submission.check_forecast_data_window('20260820')` |
+| team + model registered | `AI_WQ_create_empty_dataarray(...)` — hits the server, uploads nothing |
+| array shape / range / sums | `prepare_aiwq_submission` → `(5, 121, 240)`, finite, ∈[0,1], Σ=1.000000 |
+| template fit | returned coords `quintile = [0.2 … 1.0]`, dims match the array |
+
+The ECBox bearer token in `.env` is only proven by the first live file (`Updated CSV
+uploaded to ECbox` in the log). **Rotate it** in the `sites.ecmwf.int` web UI and update
+the `ecbox` key — the earlier token is exposed in `2026-06-30-aifs-ebox-login2.txt`.
+
+Timing to plan against: **~12 min/file, ~1 h 12 m for six**, unchanged from 20260813's
+1 h 10 m. Start 3c with hours of margin, never minutes.
 
 ---
 
