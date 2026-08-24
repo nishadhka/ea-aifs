@@ -18,8 +18,8 @@ Memory-efficient mode (icechunk): ENABLED
    Icechunk store: /tank/projects/aifs-run/20260820_0000/aiwq/ensemble_icechunk_store
    🔍 Scanning local directory /tank/projects/aifs-run/20260820_0000/nc_1p5deg for NetCDF files...
    ✅ Found 50 NetCDF files locally
-  [2m2026-08-22T15:40:21.358206Z[0m [33m WARN[0m [1;33micechunk_arrow_object_store[0m[33m: [33mThe LocalFileSystem storage is not safe for concurrent commits. If more than one thread/process will attempt to commit at the same time, prefer using object stores.[0m
-    [2;3mat[0m icechunk-arrow-object-store/src/lib.rs:220
+  2026-08-22T15:40:21.358206Z  WARN icechunk_arrow_object_store: The LocalFileSystem storage is not safe for concurrent commits. If more than one thread/process will attempt to commit at the same time, prefer using object stores.
+    at icechunk-arrow-object-store/src/lib.rs:220
 
    📥 Processing member 001 (1/50)
       Using local file: aifs_ensemble_forecast_1p5deg_member001.nc
