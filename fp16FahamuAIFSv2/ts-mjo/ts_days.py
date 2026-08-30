@@ -144,6 +144,34 @@ def load_aiwq_terciles(directory, weeks, basins):
     return bounds, used
 
 
+def tercile_probs(counts, lower, upper):
+    """Ensemble tercile probabilities, binned exactly as AI-WQ bins the observation.
+
+    The convention is not ours to choose: `AI_WQ_package.forecast_evaluation.
+    conditional_obs_probs` decides which category the *observation* falls in, and a
+    forecast binned any other way is being scored against a different partition.
+    Reading that function, for bounds (lower, upper):
+
+        below :  x <  lower
+        near  :  lower <= x <  upper     -- and only if lower != upper
+        above :  x >= upper
+
+    Both edges differ from the obvious `<=` / `>` reading, and with integer storm-day
+    counts against integer-valued terciles ties at a bound are common, so the difference
+    is not academic: it moved 0.14 of probability mass in NWP on cycle 20260820.
+
+    When `lower == upper` AI-WQ's `all_equal` mask sets the observation to NaN, i.e. the
+    basin-week cannot be scored at all. We mirror that by emitting an empty middle
+    category and reporting it, rather than implying a forecast that nothing can grade.
+
+    Returns (probs[3], degenerate).
+    """
+    x = np.asarray(counts, float)
+    degenerate = not (lower != upper)
+    near = 0.0 if degenerate else np.mean((x >= lower) & (x < upper))
+    return np.array([np.mean(x < lower), near, np.mean(x >= upper)]), degenerate
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -254,13 +282,19 @@ def main():
               "submission-grade.")
 
     probs = np.zeros((len(weeks), len(basins), 3))
+    degenerate = np.zeros((len(weeks), len(basins)), bool)
     for wi in range(len(weeks)):
         for bi in range(len(basins)):
-            c = counts[:, wi, bi]
-            lo, hi = bounds[wi, bi]
-            probs[wi, bi, 0] = np.mean(c <= lo)
-            probs[wi, bi, 1] = np.mean((c > lo) & (c <= hi))
-            probs[wi, bi, 2] = np.mean(c > hi)
+            probs[wi, bi], degenerate[wi, bi] = tercile_probs(counts[:, wi, bi],
+                                                              *bounds[wi, bi])
+    if degenerate.any():
+        pairs = ", ".join(f"{weeks[wi][0]}/{basins[bi]}"
+                          for wi, bi in zip(*np.nonzero(degenerate)))
+        print(f"\n  !! degenerate terciles (lower == upper) for {pairs}: under AI-WQ's "
+              "partition every count lands in 'above' there, and its scorer masks the "
+              "observation to NaN anyway (conditional_obs_probs `all_equal`), so those "
+              "basin-weeks are NOT scoreable. The 0/0/1 emitted for them is arithmetic, "
+              "not a forecast - it keeps the submission check's sum-to-1 satisfied.")
 
     import xarray as xr
     ds = xr.Dataset(

@@ -513,46 +513,167 @@ Probabilities against the **official IBTrACS terciles**, 50 members:
 | week | basin | mean | range | terciles | P(below/near/above) |
 |---|---|---|---|---|---|
 | 09-07 | **ATL** | 1.9 | 0–10 | 6 / 11 | 0.92 / 0.08 / 0.00 |
-| 09-07 | **NWP** | 10.3 | 0–22 | 4 / 7 | 0.06 / 0.24 / **0.70** |
-| 09-07 | SWIO | 0.6 | 0–5 | 0 / 0 | 0.62 / 0.00 / 0.38 |
-| 09-07 | SEIO | 0.4 | 0–3 | 0 / 0 | 0.80 / 0.00 / 0.20 |
-| 09-14 | **ATL** | 2.2 | 0–11 | 5 / 12 | 0.86 / 0.14 / 0.00 |
-| 09-14 | **NWP** | 9.1 | 0–21 | 5 / 8 | 0.22 / 0.30 / **0.48** |
-| 09-14 | SWIO | 0.5 | 0–4 | 0 / 0 | 0.74 / 0.00 / 0.26 |
-| 09-14 | SEIO | 0.3 | 0–2 | 0 / 0 | 0.82 / 0.00 / 0.18 |
+| 09-07 | **NWP** | 10.3 | 2–22 | 4 / 7 | 0.06 / 0.10 / **0.84** |
+| 09-07 | SWIO | 0.6 | 0–5 | 0 / 0 | *degenerate — unscoreable* |
+| 09-07 | SEIO | 0.4 | 0–3 | 0 / 0 | *degenerate — unscoreable* |
+| 09-14 | **ATL** | 2.2 | 0–11 | 5 / 12 | 0.82 / 0.18 / 0.00 |
+| 09-14 | **NWP** | 9.1 | 0–21 | 5 / 8 | 0.14 / 0.32 / **0.54** |
+| 09-14 | SWIO | 0.5 | 0–4 | 0 / 0 | *degenerate — unscoreable* |
+| 09-14 | SEIO | 0.3 | 0–2 | 0 / 0 | *degenerate — unscoreable* |
+
+Binned as AI-WQ's scorer bins the observation (see below); regenerated 2026-08-27,
+18.3 tracks/member. The counts are unchanged from the first tracked run — the tracker is
+deterministic — so only the probabilities moved.
 
 #### Verdict: still do not submit — but for a different, smaller reason
 
-`P(above) = 0.00` in NWP was previously an arithmetic certainty; it is now 0.70 and 0.48,
+`P(above) = 0.00` in NWP was previously an arithmetic certainty; it is now 0.84 and 0.54,
 a genuine forecast from a distribution spanning 0–22. The structural blocker is gone.
 
-What remains is a **per-basin amplitude bias of opposite sign**: ATL runs ~4× below the
-observed climatology and NWP ~1.6× above. Fed the observed terciles, that pushes ATL to a
-near-deterministic "below normal" (0.92 / 0.86) — and since roughly two thirds of
-observed Atlantic weeks land at or above the lower tercile by construction, that is a
-confident forecast of the less likely outcome. RPSS in ATL would be strongly negative.
-One basin scoring badly is enough to make the submission a net loss.
+What remains is a **per-basin amplitude discrepancy of opposite sign**: against the
+observed climatology ATL runs ~4× low (4.59× / 4.11×) and NWP ~1.6× high (0.56× / 0.71×
+obs/fc). Fed the observed terciles, that puts ATL at a near-deterministic "below normal"
+(0.92 / 0.82) — a confident forecast of what is, climatologically, the less likely
+outcome. If it is wrong, RPSS in ATL is strongly negative, and one basin scoring badly is
+enough to make the submission a net loss.
 
-#### The remaining fix, named precisely
+> **"Discrepancy", not "bias" — the distinction is the whole of §8's open question.**
+> This is **one cycle** compared against a **20-year climatology**, which cannot separate a
+> detector defect from a genuine forecast of a quiet Atlantic fortnight. The ensemble is
+> not blind to Atlantic storms — members range 0–10 and 0–11, and 2/50 and 1/50 reach the
+> climatological mean; the distribution is skewed low, which is equally what a quiet
+> forecast looks like.
+>
+> The opposite signs matter here. A **resolution** bias depresses every basin. ATL low and
+> NWP high is basin-dependent, so it is not the single multiplicative resolution factor
+> that the ERA5 argument below implicitly assumes. Quantile mapping would still work
+> mechanically — it is rank-based — but the *mechanism* named below is not established.
 
-The probabilities must come from terciles built **with this detector**, not from IBTrACS's
-agency-assigned intensities — that is what `--tercile-clim` was always for. A detector's
-own climatology absorbs its resolution bias; the observed one cannot.
+#### The candidate fix — and why it is not yet the *named* fix
+
+The obvious move is terciles built **with this detector** rather than from IBTrACS's
+agency-assigned intensities — what `--tercile-clim` was always for. A detector-native
+climatology absorbs a detector-native error; an observed one cannot.
 
 The ensemble cannot supply it: 50 members of one cycle over two weeks is 100 samples, the
 same sample size AI-WQ uses, but they share initial conditions and calendar weeks, so they
 are one draw, not a climatology. That is the `ENSEMBLE_SELF` path, correctly flagged as
 self-referential.
 
-**ERA5 is the right source.** At ~31 km it is close to N320's ~28 km, so the same tracker
-run over 20 years of 6-hourly ERA5 for the target calendar weeks would produce terciles
-carrying the same resolution bias as the forecast — which is exactly what makes them
-cancel. It needs `10u`, `10v`, `msl`, `t_200/300/500`, `u_850`, `v_850`, the same six-ish
-fields the store carries, and the tracker code runs unchanged given a `(time, values)`
-array. That is a bounded, well-defined job and the last thing standing between this and a
-submission.
+**Three reasons not to start building it yet.** An earlier draft of this section called
+ERA5 terciles "the one bounded job standing in the way". That was overstated:
 
-Until it exists, `--aiwq-tercile-dir` is a diagnostic, not a submission path.
+1. **It may be aimed at the wrong term.** If the ATL deficit is the *model's* forecast
+   rather than the *detector's* miss, a detector climatology corrects nothing. Nothing
+   collected so far distinguishes those (see the note above).
+2. **ERA5 is an analysis climatology; the forecast is day 18–33.** It would correct the
+   detector, not the model's behaviour at that lead. Standard S2S practice calibrates
+   against a **model climatology at matching lead** — hindcasts — precisely because
+   long-lead attenuation does not exist in analyses. That alternative is unscoped.
+3. **It is not currently startable.** No `~/.cdsapirc` and no `cdsapi` installed, so a CDS
+   account and licence acceptance are unmet *external* prerequisites, not compute. And
+   disk is **203 GB free (91 %)** as of 2026-08-29 with two 583 GB N320 stores resident
+   (`20260820`, `20260827`); a seasonal 20-year ERA5 archive is order 100–200 GB even
+   restricted to the TC belt, and does not fit alongside them.
+
+**If it is built, ERA5 is the right source.** At ~31 km it is close to N320's ~28 km, so
+the same tracker run over 20 years of 6-hourly ERA5 for the target calendar weeks would
+produce terciles carrying the same *detector* error as the forecast — which is what would
+make that term cancel. It needs `10u`, `10v`, `msl`, `t_200/300/500`, `u_850`, `v_850`,
+the same six-ish fields the store carries, and the tracker functions take flat
+`(time, values)` arrays plus `lat`/`lon`, so they should port to a regular lat/lon grid —
+**untested**, and the radius index assumes row-major storage, which ERA5 satisfies but has
+not been exercised.
+
+What it would *not* correct is the model's own behaviour at day 18–33 (reason 2 above).
+So it is a necessary step if the detector turns out to be at fault, not a sufficient one,
+and not the whole distance to a submission.
+
+Until then, `--aiwq-tercile-dir` is a diagnostic, not a submission path.
+
+#### The next checkpoint costs nothing: 2026-09-14
+
+`20260820`'s **week 1 verifies 2026-09-07 … 09-13**, so the observation is available from
+about **2026-09-14** — and it settles the question above without building anything:
+
+```bash
+$PY -c "
+from AI_WQ_package import TS_processing as T
+ib = T.download_IBTRACS('/tank/projects/ibtracs/IBTrACS.ALL.v04r01.nc')   # refresh first
+print(T.compute_single_week_numTSdays('20260907', ib))"
+```
+
+Compare the observed ATL count against our forecast distribution (mean 1.9, range 0–10,
+`P(below) = 0.92`):
+
+| observed ATL storm days | reading |
+|---|---|
+| **≲ 6** (below the lower tercile) | the forecast was right; there is no ATL bias to correct, and the ERA5 job is aimed at the wrong term |
+| **≈ 6–11** | inconclusive from one week; wait for `20260827` |
+| **≫ 11** | the forecast was confidently wrong — the discrepancy is real, and a detector-native climatology becomes the justified next job |
+
+`20260827` gives a second point a week later (week 1 = 2026-09-14 … 09-20). Two cycles is
+still not a bias estimate, but it is the difference between a measured claim and an
+inferred one — and it arrives for free.
+
+**If a cheap probe is wanted before then**, run the tracker over ERA5 for a *handful* of
+past weeks — tens of GB, not 100–200 — and compare against IBTrACS for those same weeks.
+That measures detector-versus-observation with no forecast involved, which is the question
+actually blocking everything, and it decides whether the full 20-year archive is worth
+building.
+
+#### The tercile edges are AI-WQ's to define, and we had both of them wrong
+
+The probabilities above were binned `c <= lo` / `lo < c <= hi` / `c > hi`. That looked
+like a house convention to pin down — AI-WQ distributes only the two bounds — but the
+convention is not ours. `forecast_evaluation.conditional_obs_probs` decides which category
+the **observation** falls in, and a forecast partitioned any other way is graded against a
+different partition:
+
+```python
+q == 0      ->  obs <  bounds[0]                    # below
+0 < q < n   ->  bounds[q-1] <= obs <  bounds[q]     # near, and only when lower != upper
+q == n      ->  obs >= bounds[-1]                   # above
+```
+
+Both edges differed from what we had, not one. With integer storm-day counts against
+integer-valued terciles, ties at a bound are common, so this is not academic:
+
+| week | basin | as written | scorer-matched | Δ above |
+|---|---|---|---|---|
+| 09-07 | **NWP** | 0.06 / 0.24 / 0.70 | 0.06 / 0.10 / **0.84** | **+0.14** |
+| 09-14 | **NWP** | 0.22 / 0.30 / 0.48 | 0.14 / 0.32 / **0.54** | +0.06 |
+| 09-14 | **ATL** | 0.86 / 0.14 / 0.00 | 0.82 / 0.18 / 0.00 | 0.00 |
+
+The upper edge (`c > hi` → `c >= hi`) carries most of it and the lower edge none in NWP
+week 1 — so fixing only the lower edge, the obvious half of the correction, would have
+left the larger error in place. The direction matters too: matching the scorer moves mass
+**up**, partly offsetting the NWP high bias rather than compounding the ATL low bias.
+
+`tercile_probs()` in `ts_days.py` now implements the predicate, and
+`test_tercile_binning.py` asserts agreement with the installed package over counts that
+span both bounds — a conformance test, so it fails if AI-WQ changes its edges rather than
+silently drifting:
+
+```bash
+$PY test_tercile_binning.py
+# -> PASS -- binning matches AI_WQ_package.forecast_evaluation.conditional_obs_probs
+```
+
+This has to be settled **before** the ERA5 terciles are built, not after: the bias only
+cancels if the climatology is partitioned the same way as the forecast, so an edge
+mismatch would corrupt the very correction §8 is waiting on.
+
+##### Degenerate terciles are unscoreable, not merely awkward
+
+When `lower == upper` — SWIO/SEIO in September, where 93–100 % of observed weeks have zero
+storm days — AI-WQ's `all_equal` mask sets the **observation** to NaN and the basin-week
+cannot be scored at all. Under its partition every count then falls in "above", so the
+file now emits `0 / 0 / 1` there and says so loudly. That is arithmetic, not a forecast; it
+is kept rather than NaN only because it satisfies `check_data_characteristics`'
+sum-to-1 test. Harmless for Jun–Nov inits, where `active_mask` already excludes those two
+basins — but a **Dec–Feb init can hit a degenerate bound in a scored basin**, and that is
+the case to watch.
 
 ---
 
@@ -563,9 +684,14 @@ Until it exists, `--aiwq-tercile-dir` is a diagnostic, not a submission path.
   observational products and belong with the AI-WQ package data, not in this repo.
 - **Track continuity now exists (`ts_tracks.py`, §8)** — the counter measures unique
   `(storm, day)` pairs, unbounded, matching AI-WQ. The units mismatch §6 found is fixed.
-- **Still not submittable**: a per-basin amplitude bias of opposite sign remains (ATL ~4×
-  low, NWP ~1.6× high) against the observed IBTrACS terciles. The single blocking piece is
-  a **detector-native climatology from ERA5** (§8) — nothing else is in the way.
+- **Still not submittable**: a per-basin amplitude discrepancy of opposite sign remains
+  (ATL ~4× low, NWP ~1.6× high) against the observed IBTrACS terciles. Whether that is a
+  **detector** error or a genuine forecast is **not yet established** — it rests on one
+  cycle against climatology. The free test is `20260820`'s week-1 verification from
+  **2026-09-14** (§8); a detector-native ERA5 climatology is a *candidate* fix, not a
+  confirmed one, and has unmet prerequisites (no CDS credentials, ~200 GB free disk).
 - The tracker is unvalidated against observed tracks: no cycle has been verified
   storm-by-storm against IBTrACS positions, only distribution-against-climatology.
+- Tercile binning now matches AI-WQ's scorer exactly (`tercile_probs`, guarded by
+  `test_tercile_binning.py`); §8's tables were regenerated against it on 2026-08-27.
 - Tested against `20260730` (old detector) and `20260820` (both).
