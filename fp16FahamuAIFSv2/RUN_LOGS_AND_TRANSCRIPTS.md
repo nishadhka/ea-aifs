@@ -111,22 +111,23 @@ grep -niE "password|token|secret|Bearer|api[_-]?key"      fp16FahamuAIFSv2_${DAT
 
 ### Expected shape
 
-`20260820` against its `20260813` predecessor — the step banners should line up
-within a few lines:
+Each cycle against its predecessors — the step banners should line up within a
+few lines, and a new transcript that does not is worth looking at:
 
-| | 20260813 | 20260820 |
-|---|---|---|
-| 3b command | 1 | 1 |
-| Steps 1–6 | 12, 212, 227, 305, 308, 338 | 12, 214, 229, 307, 310, 340 |
-| 3c command | 342 | 344 |
-| `SUBMISSION SUMMARY` | 627 | 952 |
-| total lines | 635 | **960** |
+| | 20260813 | 20260820 | 20260827 |
+|---|---|---|---|
+| 3b command | 1 | 1 | 1 |
+| 3c command | 342 | 344 | 344 |
+| `SUBMISSION SUMMARY` | 627 | 952 | 1001 |
+| total lines | 635 | 960 | **1009** |
 
 **The file grows every cycle for a reason unrelated to the forecast.** The AI-WQ
 package prints the full registered-teams CSV on every call — twice per file, six
-files — and that table has gone from 104 rows to 118. Roughly 325 of the 960
-lines are that table. A jump in length is not a signal that anything changed in
-the run.
+files — and that table keeps gaining teams. Measured across the numbered rows in
+the 3c log, it went from **479 rows total on 20260820 to 528 on 20260827**, which
+is exactly the 49-line difference between the two transcripts. Roughly a third of
+the file is that table. A jump in length is not a signal that anything changed in
+the run — confirm it against the row count before investigating.
 
 ### Cycles before 20260820
 
@@ -140,9 +141,12 @@ the logs.
 
 ## Related
 
-- [`run_commands_20260820.md`](run_commands_20260820.md) — the per-cycle record
-  the logs feed, including the pre-flight that works offline and the note that
-  `--dry-run` does **not** exercise the ECBox transport.
+- [`run_commands_20260827.md`](run_commands_20260827.md) — the most recent
+  per-cycle record; also documents the `HF_HOME` trap and the 58-hour gap between
+  a finished rollout and its submission.
+- [`run_commands_20260820.md`](run_commands_20260820.md) — the pre-flight that
+  works offline, and the note that `--dry-run` does **not** exercise the ECBox
+  transport.
 - [`LOCAL_GPU_RUN.md`](LOCAL_GPU_RUN.md) — Step 2 on the local box.
 - `cleanup_aifs_run.py` — reclaims a finished cycle; leaves `/tank/projects/*.log`
   alone.
