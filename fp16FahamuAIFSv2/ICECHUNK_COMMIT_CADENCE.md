@@ -1,8 +1,8 @@
 # Icechunk commit cadence — per-member vs per-72h vs per-6h (evaluated & scoped)
 
 **Question (scoped before running):** the present Path A design makes **one Icechunk
-commit per member** after its rollout (see `ICECHUNK_PATH_A.md` §2.2/§2.4 and the bring-up
-transcript `../2026-06-28-aifs-ensv2-infere-gpu-icechunk-plan.txt`). Can the store instead
+commit per member** after its rollout (see `ICECHUNK_PATH_A.md` §2.2/§2.4; the bring-up
+transcript it came from is kept locally and is no longer in the repo). Can the store instead
 be committed **every 72 h**, or **every 6 h** (each model step) if wanted? Is that a good
 idea, and what has to change?
 
