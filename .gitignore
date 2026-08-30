@@ -7,3 +7,12 @@ __pycache__/
 
 # Notebook checkpoints
 .ipynb_checkpoints/
+
+# Exported conversation transcripts.
+# The same rule exists in fp16FahamuAIFSv2/.gitignore, but a nested .gitignore does
+# not reach the repo root — which is how 2026-06-30-aifs-ebox-login2.txt sat here
+# staged-able with two ECBox bearer tokens in it (including the `Ws6…` one that
+# run_commands_20260813.md flags as exposed). A transcript records whatever was
+# pasted into the session, so treat the family as untrackable, not the one filename.
+20*-aifs-*.txt
+*login*.txt
