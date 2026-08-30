@@ -35,6 +35,7 @@ timesteps. Constants (`lsm,z,slor,sdor`) are still fetched once and replicated.
 
 | Script | Step | Role |
 |--------|------|------|
+| `setup_gpu_env_v2.sh` | 2 (setup) | Builds **and verifies** the Step-2 GPU env (pinned anemoi/torch stack, ABI-matched flash-attn wheel, `huggingface_hub`, gcc check). See *GPU software environment*. |
 | `ecmwf_opendata_pkl_input_aifsens_v2.py` | 1 (CPU) | ECMWF Open Data → 112-field input-state pkl per member, upload to GCS. Two backends via `--fetch`: **`index`** (default — one byte range per field, 16 concurrent, eccodes, `google` mirror; ~5× faster) or `earthkit` (original `earthkit-data` path, `aws`/`ecmwf` only). Bit-identical output. |
 | `fp16_automate_aifs_gpu_pipeline_v2.py` | 2 (GPU) | Orchestrator: per-member download → FP16 inference → upload → cleanup. Loads `ecmwf/aifs-ens-2.0` once. |
 | `fp16_multi_run_AIFS_ENS_v2.py` | 2 (GPU) | AIFS-ENS-2.0 FP16 runner (`run_ensemble_member`), 72h-chunked GRIB. Imported by the orchestrator. |
@@ -268,15 +269,63 @@ runs get the same speedup** if re-run on the current script.
 
 ## GPU software environment (Step 2)
 
-The inference stack is **not** in the `aifs-etl` ETL env — build a dedicated GPU
+The inference stack is **not** in the `aifs-etl` ETL env — it needs a dedicated GPU
 software env / coiled image pinned to the notebook versions:
 
 ```
 anemoi-inference==0.8.3  anemoi-models==0.11.2  anemoi-utils==0.4.35.post3
 torch==2.7.0  torch-geometric==2.6.1
 earthkit-regrid==0.5.1  ecmwf-opendata==0.3.29  'earthkit-data<1.0.0'
-flash-attn==2.7.4.post1  # cu12torch2.7 wheel
+flash-attn==2.7.4.post1  # cu12torch2.7 wheel, prebuilt (see below)
+huggingface_hub                # checkpoint resolution — NOT optional
 ```
+
+### Build it with `setup_gpu_env_v2.sh`
+
+**`setup_gpu_env_v2.sh`** builds and verifies that env in one command. Use it on any
+fresh Ampere+ GPU box instead of assembling the pins by hand:
+
+```bash
+# default: ./venv-aifs-v2 on Python 3.10 (uses uv when present, else python -m venv)
+./fp16FahamuAIFSv2/setup_gpu_env_v2.sh --prefix /scratch/venv-aifs-v2
+
+# other Python, plus the local-Icechunk deps (icechunk/zarr/xarray/netcdf4)
+./fp16FahamuAIFSv2/setup_gpu_env_v2.sh --python 3.12 --with-icechunk
+
+# re-run just the checks against an env built earlier
+./fp16FahamuAIFSv2/setup_gpu_env_v2.sh --verify-only --prefix /scratch/venv-aifs-v2
+```
+
+It then runs the stack, not just the imports: `flash_attn_func` on the GPU, and a real
+`SimpleRunner({"huggingface": "ecmwf/aifs-ens-2.0"}, device="cuda", precision="16")` load
+asserting the field contract the v2 scripts depend on — **112 input fields, 120 outputs,
+542080 grid points, 6 h timestep, `tp`/`msl`/`2t` present**. Expected tail:
+
+```
+NVIDIA L4, 23034 MiB, 570.211.01
+torch 2.7.0+cu126 | cuda True | NVIDIA L4
+flash_attn OK (1, 64, 8, 64)
+anemoi-inference 0.8.3 | anemoi-models 0.11.2 | earthkit-regrid 0.5.1
+checkpoint OK | inputs 112 | outputs 120 | grid 542080 | timestep 6:00:00
+ENV OK
+```
+
+**Three things the pin list above does not capture** — each one fails *during* inference,
+not at install time (found in `LOAD_TEST_RESULTS.md` §1, handled by the script):
+
+| Requirement | How it fails without it |
+|---|---|
+| `huggingface_hub` | `ImportError: Could not import huggingface_hub` when resolving `{"huggingface": "ecmwf/aifs-ens-2.0"}` |
+| host `gcc` (+ `CC`) | `RuntimeError: Failed to find C compiler` — the GraphTransformer JIT-builds a Triton CUDA shim on the first step (`ptxas` itself ships in the triton wheel) |
+| **prebuilt** flash-attn wheel | a source build needs `nvcc`, absent on most GPU images; the wheel must match `(cuda, torch, python-tag, C++11-ABI)` — torch 2.7 linux wheels are `cxx11abi=TRUE`, so the script derives the name from `torch._C._GLIBCXX_USE_CXX11_ABI` rather than hardcoding it |
+
+Runtime env vars for every v2 run: `export HF_HOME=<cache dir> CC=/usr/bin/gcc`.
+
+Built and verified this way on an **L4 (23 GB, driver 570 / CUDA 12.8), Python 3.10** —
+a 2-step FP16 forward pass at 16 chunks peaked at **10.77 GB allocated / 11.73 GB
+reserved**, matching the figures in `LOAD_TEST_RESULTS.md`. For a hand-rolled micromamba
+build of the same stack (Python 3.12, RTX 5000 Ada) plus the local-disk/Icechunk run
+path, see `LOCAL_GPU_RUN.md` §1.
 
 ## GPU Memory Profiling (Step 2)
 
