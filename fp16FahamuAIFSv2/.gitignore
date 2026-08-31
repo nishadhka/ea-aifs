@@ -7,7 +7,7 @@
 *.env
 .ecmwfapirc
 .ecmwfapirc.*
-coiled-data.json
+coiled-data*.json
 *credential*
 *creds*
 *.pem

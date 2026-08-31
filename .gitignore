@@ -1,5 +1,8 @@
-# GCP service-account key — must never be committed
-coiled-data.json
+# GCP service-account keys — must never be committed.
+# Match the family: coiled-data-e4drr_202505.json was untracked AND unignored under
+# the bare `coiled-data.json` rule, which is the same escape SOURCE_COOP_CREDENTIALS.md
+# §7 records for this exact filename.
+coiled-data*.json
 
 # Python bytecode caches
 __pycache__/

@@ -156,7 +156,8 @@ def run(date_str, members, input_dir, store_path, lead_time,
         num_chunks=INFERENCE_NUM_CHUNKS, float_size="f4", tag=True,
         commit_every=1, skip_existing=False, write_hours=None,
         gcs_fetch=False, bucket=None, gcs_prefix=None, service_account_key=None,
-        cleanup_pkl=False, grid="n320", native_store=None, native_vars=None):
+        cleanup_pkl=False, grid="n320", native_store=None, native_vars=None,
+        repo_factory=None, write_retries=1, write_threads=1):
 
     # VRAM knobs must be set before the model / CUDA context is created.
     os.environ["ANEMOI_INFERENCE_NUM_CHUNKS"] = str(num_chunks)
@@ -164,7 +165,7 @@ def run(date_str, members, input_dir, store_path, lead_time,
 
     import fp16_multi_run_AIFS_ENS_v2 as runmod
     from icechunk_output import (open_repo_local, init_schema, schema_exists,
-                                 member_written, IcechunkMemberWriter)
+                                 member_written, IcechunkMemberWriter, retry)
     from anemoi.inference.runners.simple import SimpleRunner
 
     bad = [m for m in members if m < 1 or m > n_members]
@@ -212,8 +213,13 @@ def run(date_str, members, input_dir, store_path, lead_time,
               + (" | delete pkl after each member" if cleanup_pkl else ""))
     print("=" * 70)
 
-    repo = open_repo_local(store_path)
-    native_repo = open_repo_local(native_store) if native_store else None
+    # Storage backend is injectable: the default is the local filesystem, and
+    # run_s3_icechunk_v2.py passes a factory that opens the same schema on S3.
+    # ``store_path`` is whatever that factory understands (a directory, or an
+    # "s3://bucket/prefix" URI) and is only otherwise used for display.
+    open_store = repo_factory or open_repo_local
+    repo = open_store(store_path)
+    native_repo = open_store(native_store) if native_store else None
 
     # Fail before the model loads if a store already holds the other grid.
     check_store_grid(repo, store_path, grid, "--store")
@@ -306,11 +312,13 @@ def run(date_str, members, input_dir, store_path, lead_time,
         if not schema_exists(repo):
             print(f"    [SCHEMA] init {n_members}x{n_steps}x{n_values}, "
                   f"{len(var_names)} vars ({float_size}), time_chunk={commit_every}")
-            init_schema(repo, n_members=n_members, n_steps=n_steps,
-                        n_values=n_values, var_names=var_names,
-                        latitudes=lats, longitudes=lons,
-                        ref_date=ref_date, timestep_s=TIME_STEP_HOURS * 3600,
-                        float_size=float_size, time_chunk=commit_every)
+            retry(lambda: init_schema(repo, n_members=n_members, n_steps=n_steps,
+                                      n_values=n_values, var_names=var_names,
+                                      latitudes=lats, longitudes=lons,
+                                      ref_date=ref_date,
+                                      timestep_s=TIME_STEP_HOURS * 3600,
+                                      float_size=float_size, time_chunk=commit_every),
+                  write_retries, "schema init")
         if native_repo is not None and not schema_exists(native_repo):
             print(f"    [SCHEMA] native sidecar {n_members}x{n_steps}x"
                   f"{len(first['latitudes'])}, {len(native_vars)} vars")
@@ -322,10 +330,12 @@ def run(date_str, members, input_dir, store_path, lead_time,
 
         writer = IcechunkMemberWriter(repo, member_index=member - 1,
                                       member_number=member, commit_every=commit_every,
-                                      regrid=regrid_fn)
+                                      regrid=regrid_fn, write_retries=write_retries,
+                                      write_threads=write_threads)
         native_writer = (IcechunkMemberWriter(
             native_repo, member_index=member - 1, member_number=member,
-            commit_every=commit_every, var_filter=native_vars)
+            commit_every=commit_every, var_filter=native_vars,
+            write_retries=write_retries, write_threads=write_threads)
             if native_repo is not None else None)
 
         # The rollout is autoregressive: every step must be COMPUTED. Steps outside the

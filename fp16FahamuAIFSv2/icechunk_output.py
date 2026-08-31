@@ -32,9 +32,36 @@ Typical use (single process, sequential members)::
     w.commit(member)
 """
 
+import time
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 import zarr
 import icechunk
+
+
+def retry(fn, tries=1, what="write", initial_backoff=0.5):
+    """Call ``fn`` up to ``tries`` times with exponential backoff.
+
+    Remote object stores fail transiently in ways Icechunk does not itself retry:
+    data.source.coop intermittently answers a chunk PUT with an empty body, which
+    surfaces as ``StorageError: ... error parsing XML: no root element`` and aborts the
+    member. Measured on a 130-chunk write loop: one failure ~30 s in, then a clean
+    40-chunk run — i.e. flaky, not a hard rejection, so a retry clears it.
+
+    ``tries=1`` (the default) is a plain call, which is what the local-filesystem path
+    wants: there a failure is a real error and should surface immediately.
+    """
+    for attempt in range(1, max(1, int(tries)) + 1):
+        try:
+            return fn()
+        except Exception as e:
+            if attempt >= tries:
+                raise
+            wait = initial_backoff * 2 ** (attempt - 1)
+            print(f"    [RETRY] {what} failed (attempt {attempt}/{tries}), "
+                  f"retrying in {wait:.1f}s: {str(e).splitlines()[0][:90]}", flush=True)
+            time.sleep(wait)
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +184,7 @@ class IcechunkMemberWriter:
 
     def __init__(self, repo, member_index, member_number=None,
                  commit_every=1, branch="main", regrid=None, var_filter=None,
-                 time_chunk=None):
+                 time_chunk=None, write_retries=1, write_threads=1):
         """``regrid`` maps a stacked ``(n_fields, n_src_values)`` block to
         ``(n_fields, n_dst_values)`` — pass ``o96_grid.regrid_block`` to write an O96
         store straight off the rollout. ``var_filter`` restricts which fields are
@@ -178,6 +205,14 @@ class IcechunkMemberWriter:
         self.var_filter = set(var_filter) if var_filter else None
         self.time_chunk = max(1, int(time_chunk if time_chunk is not None
                                      else self.commit_every))
+        # >1 only for remote stores; see retry(). Local writes should fail fast.
+        self.write_retries = max(1, int(write_retries))
+        # A step is ~120 independent single-chunk PUTs, one per variable, and against a
+        # remote store each is latency-bound: measured 1.69 MiB/s sequential against
+        # data.source.coop vs 12.9 MiB/s at 8 threads and 16.5 at 24 (2.1 MiB chunks).
+        # Writes go to different arrays so they never touch the same chunk. Local disk
+        # gains nothing from this, hence the default of 1.
+        self.write_threads = max(1, int(write_threads))
         if self.time_chunk > self.commit_every:
             # A commit always flushes, so committing more often than the chunk length
             # writes the same chunk once per commit -- the amplification the buffering
@@ -247,13 +282,27 @@ class IcechunkMemberWriter:
         lo = self._buf_chunk * self.time_chunk
         hi = min(lo + self.time_chunk, self.root[next(iter(self._buf[idxs[0]]))].shape[1])
         contiguous = idxs == list(range(lo, hi))
-        for name in self._buf[idxs[0]]:
+        def write_var(name):
             if contiguous:                          # whole chunk present -> one write
-                self.root[name][self.m, lo:hi, :] = np.stack(
-                    [self._buf[i][name] for i in idxs])
+                block = np.stack([self._buf[i][name] for i in idxs])
+                retry(lambda: self.root[name].__setitem__(
+                          (self.m, slice(lo, hi), slice(None)), block),
+                      self.write_retries, f"chunk write {name}")
             else:                                   # partial chunk (skipped steps)
                 for i in idxs:
-                    self.root[name][self.m, i, :] = self._buf[i][name]
+                    retry(lambda j=i: self.root[name].__setitem__(
+                              (self.m, j, slice(None)), self._buf[j][name]),
+                          self.write_retries, f"chunk write {name}[{i}]")
+
+        names = list(self._buf[idxs[0]])
+        if self.write_threads > 1:
+            with ThreadPoolExecutor(max_workers=self.write_threads) as ex:
+                # list() so an exception in any variable propagates instead of being
+                # swallowed with the iterator -- a half-written step must fail the step.
+                list(ex.map(write_var, names))
+        else:
+            for name in names:
+                write_var(name)
         self._buf = {}
 
     def _commit_window(self):
@@ -262,8 +311,9 @@ class IcechunkMemberWriter:
             return None
         self._flush_buffer()
         first, last = self._pending[0], self._pending[-1]
-        snap = self.session.commit(
-            f"member {self.member_number:03d} steps {first:03d}-{last:03d}")
+        msg = f"member {self.member_number:03d} steps {first:03d}-{last:03d}"
+        snap = retry(lambda: self.session.commit(msg),
+                     self.write_retries, f"commit {msg}")
         self.snapshots.append(snap)
         self._since_commit = 0
         self._pending = []
