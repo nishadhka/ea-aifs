@@ -90,3 +90,15 @@ latitude running 30 → -40 (descending), has the same orientation as the IFS
 regime catalogues. `regime_inputs` flattens a box mask, so a flipped latitude
 axis would silently permute the regime vector.
 
+
+## All five cycles (2026-10-10)
+
+20260903, 20260910, 20260917, 20260924 and 20261001 were extracted with the
+fixed script. Each has 50 members, 132 steps (6–792 h), 71 regions,
+284,000 rows and 3.2 MB, and its sha256 values match. Checks 1–3 pass on every
+cycle. On check 2, the O96/N320 rainfall ratio is 1.011–1.043 across the 15
+cycle-member pairs. O96 is always slightly wetter over the East Africa box,
+which is consistent with the coarser grid, not a units error.
+
+**No store has been purged.** The purge guard waits on check 4 and on the
+regional-grid latitude order. Both need inputs that are only on the CRMA host.
