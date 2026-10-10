@@ -37,7 +37,8 @@ quantity.
 
 - **CAPE is absent.** The convective node uses the lapse rate only.
 - **There is no OLR**, so the MJO comes from the existing `ts-mjo` product.
-- **Ocean loci** are written only if the store carries `sst`.
+- **Ocean loci** are written only if the store carries `sst`. The O96 corpus
+  does not, so in practice AIFS layer 3 has no `ocean` rows.
 
 ## Purge guard (add once validated)
 
@@ -55,3 +56,37 @@ listed file's sha256 matches. This is the same pattern as the TS/MJO rule in
    `time`. Confirm that 132 steps map to 6–792 h.
 4. Compare D11-20 basin features for 20261001 with the IFS 46-day rows for the
    same init (`crma/layer3/ifs46/evidence_d1/op_2026_10.parquet`).
+
+## First run: 20260903 (2026-10-10)
+
+The run took about 5 min on the AIFS host. It needs `geopandas`, `pyogrio` and
+`pyarrow`, which the `aifs-gpu` env lacks; they were supplied on `PYTHONPATH`.
+The output is **3.2 MB**, not 50–100 MB: `evidence.parquet` is 2.0 MB and
+`regional_compact.npz` is 0.8 MB. The manifest reports 50 members, 132 steps,
+71 regions (55 basins, 11 synoptic, 5 global, no ocean) and 284,000 rows, which
+is 50 × 4 windows × 71 × 20 features. All three sha256 values match.
+
+Fixed before this run: region means were a plain `x @ W.T`, so a single NaN
+point made the whole region NaN. `swvl1` and `ro` are NaN over sea and lakes
+(70% of points), so every coastal or lake basin, and most loci, was lost. They
+now go through `region_mean`, which skips NaN points and renormalises the weights.
+
+1. Every window × region type × feature cell has the full count (50 × regions).
+   NaN shares are zero apart from four expected cases. `cape` is 100% NaN.
+   `swvl1` and `ro` are 60% NaN in `global`, from the 3 all-ocean loci. `cp_frac`
+   is 1.9% NaN in basins, where a window has no rain. The `ea_olr` driver is all
+   NaN because the store has no OLR.
+2. `tp` is a per-6-h interval in metres, not an accumulation. Over the East
+   Africa box (12°S–15°N, 22–52°E) at h432–792, O96 and the N320 sidecar agree
+   to 1.4–2.4% for members 1, 26 and 50.
+3. `time` is datetime, and maps to 6–792 h every 6 h. The windows hold 40, 40,
+   40 and 12 steps.
+4. **Not run.** `layer3/ifs46/evidence_d1/` is not in the CRMA checkout on the
+   AIFS host.
+
+Still open: the S2S regional grids (`s2s_features --regional` npz) are not on
+this host either. So it is unconfirmed that `regional_compact.npz`, with
+latitude running 30 → -40 (descending), has the same orientation as the IFS
+regime catalogues. `regime_inputs` flattens a box mask, so a flipped latitude
+axis would silently permute the regime vector.
+

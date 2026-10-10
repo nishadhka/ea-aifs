@@ -91,8 +91,9 @@ def lead_hours(ds):
     raise SystemExit("no lead dimension found -- inspect the store")
 
 
-def region_weights(lat, lon, crma):
-    """Point weights (n_region, n_point) for basins (buffered) and every locus."""
+def region_weights(lat, lon, crma, ocean=True):
+    """Point weights (n_region, n_point) for basins (buffered) and every locus.
+    Ocean loci only when ocean=True (the store carries sst)."""
     sys.path.insert(0, os.path.join(crma, "bn-evidence"))
     sys.path.insert(0, os.path.join(crma, "medium-range-forecast", "4-bn-preprocess"))
     import ens
@@ -107,8 +108,10 @@ def region_weights(lat, lon, crma):
         m = shapely.contains_xy(g, lon180, lat)
         if m.any():
             out_ids.append(rid); out_type.append("hydrobasin"); rows.append(np.where(m, cw, 0.0))
-    for boxes, rtype in ((reg.SYNOPTIC_LOCI, "synoptic"), (reg.GLOBAL_LOCI, "global"),
-                         (reg.OCEAN_LOCI, "ocean")):
+    loci = [(reg.SYNOPTIC_LOCI, "synoptic"), (reg.GLOBAL_LOCI, "global")]
+    if ocean:
+        loci.append((reg.OCEAN_LOCI, "ocean"))
+    for boxes, rtype in loci:
         for name, bx in boxes.items():
             m = ((lat >= bx["lat"][0]) & (lat <= bx["lat"][1])
                  & (lon180 >= bx["lon"][0]) & (lon180 <= bx["lon"][1]))
@@ -117,6 +120,19 @@ def region_weights(lat, lon, crma):
     W = np.stack(rows).astype(np.float32)
     W /= W.sum(1, keepdims=True)
     return out_ids, out_type, W
+
+
+def region_mean(x, W):
+    """Weighted region means of x (..., point) -> (..., region), skipping NaN points.
+
+    A plain x @ W.T turns a whole region NaN if any one point is NaN: swvl1 and ro
+    are NaN over sea and lakes (70% of points), so every coastal or lake basin and
+    most loci were lost.  Here NaN points are dropped and the remaining weights
+    renormalised; a region is NaN only when all of its points are."""
+    ok = ~np.isnan(x)
+    num = np.where(ok, x, 0.0) @ W.T
+    den = ok.astype(W.dtype) @ W.T
+    return np.where(den > 0, num / np.where(den > 0, den, 1.0), np.nan)
 
 
 def nearest_index(lat, lon, glat, glon):
@@ -164,7 +180,7 @@ def main():
     print(f"{a.cycle}: {len(members)} members, {len(lh)} steps {lh.min()}-{lh.max()} h, "
           f"{lat.size} points | missing {missing}", flush=True)
     grid = ReducedGaussianGrid(lat, lon)
-    ids, rtypes, W = region_weights(lat, lon, a.crma_repo)
+    ids, rtypes, W = region_weights(lat, lon, a.crma_repo, ocean="sst" in ds)
     # the S2S regional grid (s2s_features.REGION at 1.5 deg), for the compact fields
     glat = np.arange(30.0, -40.0 - 1e-9, -1.5); glon = np.arange(10.0, 90.0, 1.5)
     nidx = nearest_index(lat, lon, glat, glon)
@@ -201,7 +217,7 @@ def main():
                     continue
                 if fe == "slp":
                     daily = x[sel].reshape(-1, 4, x.shape[1]).mean(1) if sel.sum() % 4 == 0 else x[sel]
-                    rb = daily @ W.T                                    # (day, region)
+                    rb = region_mean(daily, W)                                   # (day, region)
                     for name, val in (("slp_mean", rb.mean(0)), ("slp_max", rb.max(0))):
                         recs.append((wname, name, val))
                     continue
@@ -213,7 +229,7 @@ def main():
                         den = np.nansum(f["tp"][sel], 0) @ W.T
                         recs.append((wname, "cp_frac", np.where(den > 0, num / np.where(den > 0, den, 1), np.nan)))
                     continue
-                recs.append((wname, fe, np.nanmean(x[sel], 0) @ W.T))
+                recs.append((wname, fe, region_mean(np.nanmean(x[sel], 0), W)))
         ev = pd.DataFrame([{"window": w, "feature": fe, "region_id": rid, "region_type": rt,
                             "value": float(v)}
                            for w, fe, vals in recs for rid, rt, v in zip(ids, rtypes, vals)])
@@ -223,7 +239,7 @@ def main():
         tpd = None
         if tp is not None:
             nd = len(lh) // 4
-            tpd = tp[:nd * 4].reshape(nd, 4, -1).sum(1) @ W[basins].T     # (day, basin) mm/day
+            tpd = region_mean(tp[:nd * 4].reshape(nd, 4, -1).sum(1), W[basins])    # (day, basin) mm/day
         # regional compact, on the S2S 1.5-deg grid, window means
         reg_vars = {"u850": u8, "v850": v8, "q850": q8, "slp": f["msl"] / 100.0,
                     "olr": np.full_like(u8, np.nan), "u200": f["u_200"], "z500": f["z_500"] / G,
