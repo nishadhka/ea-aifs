@@ -181,8 +181,12 @@ def main():
           f"{lat.size} points | missing {missing}", flush=True)
     grid = ReducedGaussianGrid(lat, lon)
     ids, rtypes, W = region_weights(lat, lon, a.crma_repo, ocean="sst" in ds)
-    # the S2S regional grid (s2s_features.REGION at 1.5 deg), for the compact fields
-    glat = np.arange(30.0, -40.0 - 1e-9, -1.5); glon = np.arange(10.0, 90.0, 1.5)
+    # the S2S regional grid, exactly as s2s_features.reader() cuts REGION from the
+    # IFS 1.5-deg stores: lat 30 -> -39 descending (47), lon 10.5 -> 90 (54).  The
+    # IFS lon nodes are multiples of 1.5, so the grid starts at 10.5, not 10.0: a
+    # 10.0 start has the same shape and regime-box size and is silently 0.5 deg west.
+    glat = np.arange(30.0, -40.0, -1.5); glon = np.arange(10.5, 90.0 + 1e-9, 1.5)
+    assert glat.size == 47 and glon.size == 54 and glon[0] == 10.5 and glon[-1] == 90.0
     nidx = nearest_index(lat, lon, glat, glon)
     init = pd.Timestamp(a.cycle)
 

@@ -83,15 +83,7 @@ now go through `region_mean`, which skips NaN points and renormalises the weight
    to 1.4–2.4% for members 1, 26 and 50.
 3. `time` is datetime, and maps to 6–792 h every 6 h. The windows hold 40, 40,
    40 and 12 steps.
-4. **Not run.** `layer3/ifs46/evidence_d1/` is not in the CRMA checkout on the
-   AIFS host.
-
-Still open: the S2S regional grids (`s2s_features --regional` npz) are not on
-this host either. So it is unconfirmed that `regional_compact.npz`, with
-latitude running 30 → -40 (descending), has the same orientation as the IFS
-regime catalogues. `regime_inputs` flattens a box mask, so a flipped latitude
-axis would silently permute the regime vector.
-
+4. Run later on the same day; see "Check 4 and the regional grid" below.
 
 ## All five cycles (2026-10-10)
 
@@ -102,5 +94,61 @@ cycle. On check 2, the O96/N320 rainfall ratio is 1.011–1.043 across the 15
 cycle-member pairs. O96 is always slightly wetter over the East Africa box,
 which is consistent with the coarser grid, not a units error.
 
-**No store has been purged.** The purge guard waits on check 4 and on the
-regional-grid latitude order. Both need inputs that are only on the CRMA host.
+Checks 1–3 are `crma_layer3_check.py <cycle> ...`.
+
+## Check 4 and the regional grid (2026-10-10)
+
+Both turned out to be runnable from the AIFS host. The IFS 46-day stores that
+`s2s_features.py` reads are public and anonymous on S3
+(`dynamical-ecmwf-ifs-ens`, `planette-ifs-46-day`).
+
+**Regional grid: latitude order matches, but longitude was off by half a
+cell.** `s2s_features.reader()` cuts REGION from the IFS 1.5° grids. Both the
+reforecast and the operational store give lat 30 → -39 descending (47 rows)
+and lon **10.5** → 90 (54 columns). The extractor used `arange(10.0, 90.0, 1.5)`,
+which also gives 54 columns and a 918-cell regime box, so nothing failed. Every
+AIFS cell was simply 0.5° west of the matching IFS cell. Fixed: the grid is now
+built exactly as `reader()` builds it, with an assert on its ends, and all five
+cycles have been re-extracted. The drivers moved by 0.44 on average (mean
+absolute change). Checks 1–3 still pass on all five.
+
+**Check 4: AIFS 20261001 vs the IFS 46-day operational run of 2026-10-01.**
+The IFS rows were regenerated with CRMA's own `s2s_features.py`
+(`--source op --years 2026 --limit 1 --dilate 1`, with REPO redirected to
+scratch). The `layer3/observations` basin list was replaced by a stub listing
+the same 55 ICPAC basins. Then `crma_layer3_check4.py` was run. All 55 basins
+match. All 15 shared features agree in units and sign, and the across-basin
+correlation of the ensemble means is 0.92–0.99 for every moisture, rain,
+pressure and transport feature, in every window. z500 (0.59–0.79) and
+divergence (0.65–0.79) are lower, as expected for fields that vary little
+across basins. There are consistent model biases, which per-model
+climatologies are meant to absorb; none of them is an extraction error:
+
+| feature | IFS D11-20 | AIFS D11-20 | |
+|---|---|---|---|
+| tp, mm/day | 3.43 | 2.68 | AIFS 22–32% drier in every window |
+| slp_mean, hPa | 1012.6 | 1014.4 | +1.2 to +1.8 hPa |
+| z500, m | 5884 | 5902 | +12 to +17 m |
+| vq850 | 11.2 | 7.9 | weaker southerly moisture flux, D1-10 and D11-20 |
+
+AIFS ensemble spread is narrower than IFS, at 0.6–1.0 of IFS's spread (median
+across basins). Part of that is 50 members against 101.
+
+## Before the purge: loci schema, not yet fixed
+
+Basins match the S2S layout exactly. **The loci do not**, and unlike a name,
+a missing variable cannot be recovered once the O96 store is gone:
+
+- **synoptic**: S2S writes `<field>_mean` (e.g. `q850_mean`, `tp_mean`) plus
+  `vo850_max`, `mfx850_max`, `slp_boxmax` and `slp_boxmin`. AIFS writes the
+  basin names (`q850`, `tp`) and no box maxima or minima.
+- **global**: S2S writes `u200_mean`, `u850_mean`, `u50_mean`, `u10_mean` and
+  `slp_mean`. AIFS writes the 20 basin features instead, and has no u50 or u10
+  although the store carries `u_50` and `u_10` (the QBO locus needs them).
+- **ocean**: S2S writes `sst_mean` for INDIAN_OCEAN_LOCI and ENSO_LOCI. AIFS
+  writes none because there is no `sst`, but the store has `skt`, which over the
+  sea is the SST.
+- **member**: S2S numbers members from 0, AIFS from 1.
+
+**No store has been purged.** Checks 1–4 and the grid now pass, but the loci
+should match the S2S schema before any store is purged.
