@@ -151,6 +151,44 @@ python s2s_bn_evidence_prep.py \
   --regions IGAD_EA,EQ_INDIAN,CONGO --explain-out explain_20260730.json
 ```
 
+## Direction (2026-10-10): toward CRMA v4 — Regional and Local, joined only in the explanation
+
+The explanation-first turn (6) and CRMA's v4 work have converged on one
+architecture. Each forecast product, AIFS-ENS included, is reduced **once** to
+CRMA layer 3, in the long layout shared with the IFS medium range, the IFS
+46-day S2S and SEAS5: `init_time, window, region_id, region_type, feature,
+node, member, value`. The region types are `hydrobasin`, `synoptic`, `ocean`
+and `global`, from CRMA's `bn-evidence/regions.py`.
+
+Two questions are then answered separately:
+
+| | question | built from |
+|---|---|---|
+| **Regional** | What meteorological situation explains the geographical pattern we are seeing? | gridded diagnostics kept *before* basin aggregation: drivers (jets, ridges, Walker, IOD/ENSO, MJO), regimes with each member as its own proposition, anomaly objects |
+| **Local** | Given the evidence for this basin or admin-1, what does the BN imply about risk? | basin evidence → BN → belief, sharpness, decibel audit, held-out skill |
+
+They meet only in the explanation. Meteorology (what is happening) → CRMA (what
+the evidence implies about risk) → DRM (what to do, outside CRMA). The
+circulation explanation record of (6) is the Regional half. The jet
+(`low_level_jets.py`) and high (`upper_jet_and_highs.py`) findings are its
+best-supported loci: they carry 2–4× the ESS of the field regimes.
+
+12. **`crma_layer3_extract.py`** + **`CRMA_LAYER3.md`** — *the bridge.* One
+    cycle's O96 corpus (~158 GB) is reduced to CRMA layer 3 (~50–100 MB):
+    basin, synoptic, global and ocean evidence, daily basin rainfall, and the
+    regional regime and driver inputs on CRMA's grid. Written to
+    `/tank/projects/crma_layer3/<cycle>/`, outside `aifs-run`, so the store
+    can then be purged behind a manifest-checked guard. **DRAFT**: run it on
+    one cycle first. The plan, including ERA5's role as the observed reference
+    for anomalies and verification, is in
+    `crma/hazards/dryspell/AIFS_ERA5_LAYER3_PLAN.md`.
+
+**How AIFS is used until it has a calibration record.** Not yet in a BN belief:
+with no reforecast, a per-model fit needs about a year of weekly cycles. In the
+Regional layer it is used now. Members are projected onto CRMA's IFS regime
+catalogues, so model agreement ("positive-IOD pattern: AIFS x%, IFS y%") becomes
+a regional fact, verified later against ERA5.
+
 ## Not built (honest scope)
 
 Forecast-side only. Reserved in the registry, needing external data or many cycles:
