@@ -60,7 +60,9 @@ listed file's sha256 matches. This is the same pattern as the TS/MJO rule in
 ## First run: 20260903 (2026-10-10)
 
 The run took about 5 min on the AIFS host. It needs `geopandas`, `pyogrio` and
-`pyarrow`, which the `aifs-gpu` env lacks; they were supplied on `PYTHONPATH`.
+`pyarrow`. At the time `aifs-gpu` lacked them and they were supplied on
+`PYTHONPATH`. They have since been pip-installed into `aifs-gpu`
+(geopandas 1.2.0, pyogrio 0.13.0, pyarrow 26.0.0, nothing else upgraded).
 The output is **3.2 MB**, not 50–100 MB: `evidence.parquet` is 2.0 MB and
 `regional_compact.npz` is 0.8 MB. The manifest reports 50 members, 132 steps,
 71 regions (55 basins, 11 synoptic, 5 global, no ocean) and 284,000 rows, which
