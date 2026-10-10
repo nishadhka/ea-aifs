@@ -346,3 +346,7 @@ reports `max_memory_allocated` / `max_memory_reserved`.
 - **Ensemble noise:** v2 is inherently stochastic (model injects noise per run); keep the
   50 IC-perturbed members. Exact reproducibility needs the determinism flags from the
   notebook (`CUBLAS_WORKSPACE_CONFIG`, `torch.use_deterministic_algorithms`).
+- [`CYCLE_DATA_INVENTORY.md`](CYCLE_DATA_INVENTORY.md) — what is on disk for every
+  cycle: which stores, which grid (O96 ~112 km / N320 ~28 km), how many variables and
+  steps, and which target reads which. Includes the storage arithmetic and the pkl
+  symlink convention.
