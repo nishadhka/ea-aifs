@@ -1,0 +1,347 @@
+Assembled from the run logs in /tank/projects (run_1029_*.log, proto_gcs_20261029_all50.log,
+chain_20261029.log). Compute ran in background shells via chain_20261029.sh, so this is the
+genuine output of each stage rather than a literal interactive paste. Per-member blocks and
+the 51-team registration table are trimmed where marked.
+
+================================================================================
+Step 0 - open-data pre-check
+================================================================================
+(aifs-gpu) ezra@e4drr-crafd-icpac:~/ea-aifs/fp16FahamuAIFSv2$ python run-pre50r1-dates/check_open_data_inputs.py --date 20261029
+=== ECMWF open data 20261029 00z (gcs) ===
+  AIFS v2: RUNNABLE
+      sfc     9/9
+      sol     2/2
+      pl      6/6
+      levels  14/14
+      wave    11/11
+
+================================================================================
+Step 1 - pkl creation (50 members, GCS)
+================================================================================
+(aifs-gpu) ezra@e4drr-crafd-icpac:~/ea-aifs/fp16FahamuAIFSv2$ python -u s3_grib_pkl/s3_grib_pkl_input_aifsens_v2_proto.py \
+    --date 20261029_0000 --members 1-50 --source gcs \
+    --out /tank/projects/aifs-run/20261029_0000/input_states --skip-existing
+PROTOTYPE gribberish v2 | members 1-50 (50) | source=gcs | t=2026-10-29 00:00:00 t-6h=2026-10-28 18:00:00
+constants (z/slor/sdor/lsm) from oper 0h, shared across members ...
+  ['lsm', 'sdor', 'slor', 'z'] (3.0s)
+
+[1/50] member 1
+    [surface] 9 fields (3.7s)
+    [soil] 4 fields (1.8s)
+    [wave] 12 fields (4.0s)
+    [pl_gh] 14 fields (5.2s)
+    [pl_t] 14 fields (4.2s)
+        [... members 2-49 trimmed, every one logged 112/112 fields ... -> OK ...]
+    [pl_t] 14 fields (4.1s)
+    [pl_u] 14 fields (5.0s)
+    [pl_v] 14 fields (4.8s)
+    [pl_w] 14 fields (5.0s)
+    [pl_q] 13 fields (4.0s)
+  TOTAL member 50: 112 fields, 35.5s
+  verify: 112/112 fields, shapes={(2, 542080)}, missing=[], extra=[] -> OK
+  35.5s | avg 39.8s | ETA 0.0 min -> /tank/projects/aifs-run/20261029_0000/input_states/proto_input_state_member_050.pkl
+
+============================================================
+DONE source=gcs: 50/50 ok
+  total 33.8 min (0.56 h), avg 39.8s/member
+
+Fastest Step 1 of the project by a wide margin: 39.8 s/member against 138.1 s on 20261022
+and 187.4 s on 20261015. 50 files, 971 MB each, 38 GB total.
+
+================================================================================
+chain_20261029.sh - rename -> Step 2 -> 3a -> 3b (COMPUTE ONLY)
+================================================================================
+### 13:39 waiting for Step 1 to finish
+### 14:13 Step 1 ended with 50 pkl files
+### 14:13 renaming proto_ prefix (run_local_icechunk_v2.py hardcodes input_state_member_NNN.pkl)
+### 14:13 Step 2 — tier B rollout
+### 18:53 Step 2 done
+### 18:53 3a — regrid 432-792h to 1.5 deg
+### 19:02 3a done
+### 19:02 3b — quintiles
+### 19:04 3b done
+### 19:04 CHAIN COMPLETE through 3b — 3c, TS and MJO are gated on validation
+
+================================================================================
+Step 2 - tier-B rollout to 792 h (tail)
+================================================================================
+    ✅ Loaded pickle: /tank/projects/aifs-run/20261029_0000/input_states/input_state_member_050.pkl
+    Date: 2026-10-29 00:00:00 | Fields: 112
+Coupled forcings are not supported by this runner: ['lsm', 'sdor', 'slor', 'wmb', 'z']
+    120h / 792h (stored 20/132, 20 commits)
+    240h / 792h (stored 40/132, 40 commits)
+    360h / 792h (stored 60/132, 60 commits)
+    480h / 792h (stored 80/132, 80 commits)
+    600h / 792h (stored 100/132, 100 commits)
+    720h / 792h (stored 120/132, 120 commits)
+    [OK] member 050: stored 132/132 steps, 132 commits (last WB3SB9PQ94A0JWB2XVWG) in 413.3s
+
+[TAG] icechunk_o96: cycle-20261029_0000 -> WB3SB9PQ94A0JWB2XVWG (50/50 members)
+
+[TAG] icechunk_n320_aiwq: cycle-20261029_0000 -> PVT5E251QFEC1FKCS2E0 (50/50 members)
+
+======================================================================
+DONE: 50 written, 0 skipped, 0 failed of 50 members -> /tank/projects/aifs-run/20261029_0000/icechunk_o96
+======================================================================
+
+================================================================================
+3a - regrid 432-792 h to 1.5 deg (tail)
+================================================================================
+🧹 Step 4: Final cleanup
+    🧹 Cleared earthkit cache directory
+    🧹 Cleared earthkit tmp directory
+💾 Disk space after cleanup: 75.6 GB
+🧹 Cleaned up temporary directory
+✅ Member 50 done (0.2 min)  [50/50]  est. remaining ~0.0 min
+
+======================================================================
+PROCESSING SUMMARY (1-way)
+======================================================================
+✅ Successful: 50/50 members
+❌ Failed: 0 members
+⏱️  Total time: 8.3 minutes
+⏱️  Avg wall-clock per member: 10s (throughput, not per-member compute)
+
+================================================================================
+3b - quintile probabilities (tail)
+================================================================================
+🔢 Step 3: Calculating quintile probabilities...
+📅 Using climatology for valid dates: 20261116, 20261123
+Processing 2t -> tas
+  Processing week1 using time chunks [0, 1]
+    Loaded climatology: (1, 4, 121, 240)
+      Added time chunk 0: 12 steps
+      Added time chunk 1: 12 steps
+    Weekly mean (sum / 24 steps)
+      🚀 Using VECTORIZED calculation...
+      ✅ Vectorized calculation complete!
+    ✓ Completed week1
+  Processing week2 using time chunks [2, 3, 4]
+    Loaded climatology: (1, 4, 121, 240)
+      Added time chunk 2: 12 steps
+      Added time chunk 3: 12 steps
+      Added time chunk 4: 12 steps
+    Weekly mean (sum / 36 steps)
+      🚀 Using VECTORIZED calculation...
+      ✅ Vectorized calculation complete!
+    ✓ Completed week2
+✓ Completed 2t
+
+Quintile analysis complete:
+<xarray.Dataset> Size: 7MB
+Dimensions:        (latitude: 121, longitude: 240, time_week: 2, quintile: 5)
+Coordinates:
+  * latitude       (latitude) float64 968B 90.0 88.5 87.0 ... -87.0 -88.5 -90.0
+  * longitude      (longitude) float64 2kB 0.0 1.5 3.0 4.5 ... 355.5 357.0 358.5
+    week           (time_week) <U5 40B 'week1' 'week2'
+  * quintile       (quintile) float64 40B 0.2 0.4 0.6 0.8 1.0
+    time           int64 8B 0
+Dimensions without coordinates: time_week
+Data variables:
+    2t_quintiles   (time_week, quintile, latitude, longitude) float64 2MB 0.4...
+    tp_quintiles   (time_week, quintile, latitude, longitude) float64 2MB 0.6...
+    msl_quintiles  (time_week, quintile, latitude, longitude) float64 2MB 0.0...
+Attributes:
+    title:                  Ensemble Forecast Quintile Probabilities
+    processing_date:        2026-10-29T19:04:01
+    source_icechunk_store:  /tank/projects/aifs-run/20261029_0000/icechunk_n3...
+    source_icechunk_ref:    cycle-20261029_0000
+    forecast_date:          20261029
+    precision:              FP16-v2
+
+💾 Step 4: Saving results...
+✅ Saved to /tank/projects/aifs-run/20261029_0000/aiwq/ensemble_quintile_probabilities_20261029_v2.nc (6.7 MB)
+
+📊 Step 5: Analysis Summary
+----------------------------------------
+Mode: FP16-v2
+Processed variables: ['2t_quintiles', 'tp_quintiles', 'msl_quintiles']
+Time periods: 2
+Grid resolution: 121x240
+
+Quintile probability statistics:
+
+  2t_quintiles:
+    Q1 (0.2): 0.136 mean probability
+    Q2 (0.4): 0.133 mean probability
+    Q3 (0.6): 0.142 mean probability
+    Q4 (0.8): 0.167 mean probability
+    Q5 (1.0): 0.423 mean probability
+
+  tp_quintiles:
+    Q1 (0.2): 0.238 mean probability
+    Q2 (0.4): 0.171 mean probability
+    Q3 (0.6): 0.175 mean probability
+    Q4 (0.8): 0.183 mean probability
+    Q5 (1.0): 0.233 mean probability
+
+  msl_quintiles:
+    Q1 (0.2): 0.210 mean probability
+    Q2 (0.4): 0.174 mean probability
+    Q3 (0.6): 0.167 mean probability
+    Q4 (0.8): 0.172 mean probability
+    Q5 (1.0): 0.278 mean probability
+
+📤 Step 6: Ready for AI Weather Quest submission
+   Output file: /tank/projects/aifs-run/20261029_0000/aiwq/ensemble_quintile_probabilities_20261029_v2.nc
+   Available variables: ['2t_quintiles', 'tp_quintiles', 'msl_quintiles']
+   Use submit_forecast() function to submit results
+
+================================================================================
+Terciles - fetched BEFORE ts_days.py (the 20261015 trap)
+================================================================================
+$ python - <<'EOF'
+from AI_WQ_package import retrieve_evaluation_data as red
+for d in ("20261116", "20261123"):
+    red.retrieve_20yr_quantile_clim(d, "TS", os.environ["AIWQ_PASSWORD"],
+                                    local_destination="/tank/projects/aifs-run/20261029_0000/ts_terciles")
+EOF
+TS_20yrCLIM_WEEKLYTSDAYS_terciles_20261116.nc
+TS_20yrCLIM_WEEKLYTSDAYS_terciles_20261123.nc
+
+================================================================================
+3c - submit tas / mslp / pr (6 files)
+================================================================================
+Loaded credentials from .env
+============================================================
+AI Weather Quest Forecast Submission (FP16-v2)
+============================================================
+
+Submitting 6 forecasts...
+  Team: Fahamu
+  Model: fp16FahamuAIFSv2
+  Date: 20261029
+  File: /tank/projects/aifs-run/20261029_0000/aiwq/ensemble_quintile_probabilities_20261029_v2.nc
+--------------------------------------------------
+
+        [... per-file upload blocks trimmed ...]
+  Successfully submitted tas_week2
+
+============================================================
+SUBMISSION SUMMARY
+============================================================
+Mode: FP16-v2
+Date: 20261029
+Team: Fahamu
+Model: fp16FahamuAIFSv2
+Successful: 6
+Failed: 0
+
+================================================================================
+TS storm days - tracker on the N320 sidecar
+================================================================================
+    [2;3mat[0m icechunk-arrow-object-store/src/lib.rs:220
+TS days | init 2026-10-29 | members 50 | 2026-11-16 .. 2026-12-01
+  centres: msl<=band median-500 Pa and <=annulus mean-500 Pa, zeta850>=1.0e-04 1/s, warm core>=+1.0 K (T200-500 within 200 km minus annulus to 800 km), separation 500 km
+  tracks:  link <= 25 m/s, keep >= 24 h; count (track, day) pairs with max|V10| within 300 km >= 17.0 m/s
+  16 days -> 2 full 7-day windows, detection belt |lat|<=45 (379662 of 542080 points)
+    member 10/50 done (15 tracks)
+    member 20/50 done (9 tracks)
+    member 30/50 done (8 tracks)
+    member 40/50 done (6 tracks)
+    member 50/50 done (14 tracks)
+  !! degenerate terciles (lower == upper) for 2026-11-16/ATL, 2026-11-16/SEIO, 2026-11-23/ATL, 2026-11-23/SWIO, 2026-11-23/SEIO: under AI-WQ's partition every count lands in 'above' there, and its scorer masks the observation to NaN anyway (conditional_obs_probs `all_equal`), so those basin-weeks are NOT scoreable. The 0/0/1 emitted for them is arithmetic, not a forecast - it keeps the submission check's sum-to-1 satisfied.
+  wrote /tank/projects/aifs-run/20261029_0000/ts_days_probs_20261029_tracked.nc   (8.7 tracks/member)
+  week from 2026-11-16:
+    ATL   mean   0.6 d  range 0-5  terciles 0/0  P(below/near/above) = 0.00/0.00/1.00
+    NWP   mean   4.7 d  range 0-12  terciles 0/2  P(below/near/above) = 0.00/0.24/0.76
+    SWIO  mean   0.5 d  range 0-4  terciles 0/2  P(below/near/above) = 0.00/0.84/0.16
+    SEIO  mean   0.1 d  range 0-1  terciles 0/0  P(below/near/above) = 0.00/0.00/1.00
+  week from 2026-11-23:
+    ATL   mean   0.5 d  range 0-3  terciles 0/0  P(below/near/above) = 0.00/0.00/1.00
+    NWP   mean   2.6 d  range 0-10  terciles 0/3  P(below/near/above) = 0.00/0.56/0.44
+    SWIO  mean   0.3 d  range 0-5  terciles 0/0  P(below/near/above) = 0.00/0.00/1.00
+    SEIO  mean   0.1 d  range 0-2  terciles 0/0  P(below/near/above) = 0.00/0.00/1.00
+
+================================================================================
+MJO - VPM on the O96 store, projected onto the RMM-fitted basis
+================================================================================
+    [2;3mat[0m icechunk-arrow-object-store/src/lib.rs:220
+VPM | init 2026-10-29 | members 50 | 2026-10-29 .. 2026-12-01 | 132 steps
+  chi200: divergence on the regular grid -> 1.5 deg Poisson solve; U850/U200 banded on the regular grid
+    member 10/50 done
+    member 20/50 done
+    member 30/50 done
+    member 40/50 done
+    member 50/50 done
+  removed calendar-day climatology /tank/projects/era5_vpm_clim/vpm_clim_1991_2020.npz (days 301..334)
+  !! no --lowfreq: the preceding 120-day mean is not removed
+  normalisation (std per field): chi200=4.912e+06, u850=1.939e+00, u200=5.491e+00   [FIXED, from /tank/projects/era5_vpm_clim/rmm_basis.npz]
+    this forecast's own would have been: chi200=6.975e+06, u850=3.022e+00, u200=7.637e+00  -- ratios 1.42, 1.56, 1.39
+  wrote bands -> /tank/projects/mjo_model_clim/bands_20261029.npz
+  applied basis intercept (+0.0545, +0.0263)
+  basis is a REGRESSION onto PSL's published VPM, not an EOF: e1.e2=-124.3 (not orthogonal, as expected)
+  wrote /tank/projects/aifs-run/20261029_0000/mjo_probs_20261029.nc
+
+================================================================================
+TS + MJO submission - FIRST CYCLE WITH --fill-rule bounds
+================================================================================
+$ python -u submit_ts_mjo_cli.py --date 20261029 --fill-rule bounds \
+    --ts-nc $BASE/ts_days_probs_20261029_tracked.nc --tercile-dir $BASE/ts_terciles \
+    --mjo-nc $BASE/mjo_probs_20261029.nc
+team=Fahamu  model=fp16FahamuAIFSv2  init=20261029  cred=ecbox token
+
+TS period 1  (days 18-24, valid week 2026-11-16)
+    ATL   bounds    0/   0  mean  0.62 days  P(below,near,above) = 0.33,0.33,0.33  [degenerate bounds -> uniform 1/3]
+    NWP   bounds    0/   2  mean  4.70 days  P(below,near,above) = 0.00,0.24,0.76
+    SWIO  bounds    0/   2  mean  0.46 days  P(below,near,above) = 0.00,0.84,0.16  [off-table but scoreable]
+    SEIO  bounds    0/   0  mean  0.12 days  P(below,near,above) = 0.33,0.33,0.33  [degenerate bounds -> uniform 1/3]
+    active columns ['ATL', 'NWP'] sum to [1. 1.]
+
+TS period 2  (days 25-31, valid week 2026-11-23)
+    ATL   bounds    0/   0  mean  0.54 days  P(below,near,above) = 0.33,0.33,0.33  [degenerate bounds -> uniform 1/3]
+    NWP   bounds    0/   3  mean  2.58 days  P(below,near,above) = 0.00,0.56,0.44
+    SWIO  bounds    0/   0  mean  0.32 days  P(below,near,above) = 0.33,0.33,0.33  [degenerate bounds -> uniform 1/3]
+    SEIO  bounds    0/   0  mean  0.12 days  P(below,near,above) = 0.33,0.33,0.33  [degenerate bounds -> uniform 1/3]
+    active columns ['ATL', 'NWP'] sum to [1. 1.]
+
+MJO  valid 2026-11-05, 2026-11-12, 2026-11-19, 2026-11-26  (init +7/14/21/28)
+    modal category per lag: [8, 8, 8, 8]
+    P(inactive):            [0. 0. 0. 0.]
+    !! miscalibrated -- see MJO_METHOD.md section 5
+        [... 51-team registration table trimmed ...]
+forecast submitted within competition time window
+  submitted TS period 1
+forecast submitted within competition time window
+  submitted TS period 2
+forecast submitted within competition time window
+  submitted MJO period 1
+3/3 submitted
+
+================================================================================
+Verification - against the server, paginated
+================================================================================
+$ python check_submissions_paged.py --date 20261029
+20261029: 68 files across 1 page(s)
+  OK   tas  p1
+  OK   tas  p2
+  OK   mslp p1
+  OK   mslp p2
+  OK   pr   p1
+  OK   pr   p2
+  OK   TS   p1
+  OK   TS   p2
+  OK   MJO  p1
+
+9/9 present
+
+Full server metadata for the nine, from a one-off paginated listing (68 entries, 1 page):
+
+  MJO_20261029_p1_Fahamu_fp16FahamuAIFSv2.nc        11,061 B   2026-10-30T07:21:50Z
+  TS_20261029_p1_Fahamu_fp16FahamuAIFSv2.nc         12,029 B   2026-10-30T06:12:52Z
+  TS_20261029_p2_Fahamu_fp16FahamuAIFSv2.nc         12,029 B   2026-10-30T06:47:37Z
+  mslp_20261029_p1_Fahamu_fp16FahamuAIFSv2.nc    1,182,087 B   2026-10-29T19:38:24Z
+  mslp_20261029_p2_Fahamu_fp16FahamuAIFSv2.nc    1,182,087 B   2026-10-29T20:11:24Z
+  pr_20261029_p1_Fahamu_fp16FahamuAIFSv2.nc      1,182,081 B   2026-10-29T20:44:33Z
+  pr_20261029_p2_Fahamu_fp16FahamuAIFSv2.nc      1,182,081 B   2026-10-29T21:18:22Z
+  tas_20261029_p1_Fahamu_fp16FahamuAIFSv2.nc     1,182,123 B   2026-10-29T21:51:13Z
+  tas_20261029_p2_Fahamu_fp16FahamuAIFSv2.nc     1,182,123 B   2026-10-29T22:24:20Z
+
+Window closes 2026-11-01 23:59 UTC; the last file landed with roughly 41 h to spare.
+
+================================================================================
+Disk
+================================================================================
+tank/projects   1.9T  1.8T   74G  97% /tank/projects
+
+74 GB free. Step 2 needs ~210 GB, so the NEXT cycle requires a purge before it can run.
