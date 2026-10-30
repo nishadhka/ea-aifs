@@ -8,10 +8,23 @@
 .ecmwfapirc
 .ecmwfapirc.*
 coiled-data.json
-*credential*
-*creds*
+# NOTE: gitignore patterns are CASE-SENSITIVE. `*credential*` did not match
+# SOURCE_COOP_CREDENTIALS.md, which sat untracked-but-committable for ten weeks.
+# Match every case explicitly rather than trusting the lowercase spelling.
+*[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]*
+*[Cc][Rr][Ee][Dd][Ss]*
+*[Ss][Ee][Cc][Rr][Ee][Tt]*
+*[Tt][Oo][Kk][Ee][Nn]*
 *.pem
 *.key
+
+# Competition identifiers — AI_WQ_unique_IDs.csv is the per-team submission ID table.
+AI_WQ_unique_IDs.csv
+
+# Local scratch that is deliberately NOT part of the record
+check-session.txt
+quiz.txt
+quiz_v2_answers.md
 
 # Generated ETL / submission outputs
 input_states_v2/
