@@ -282,7 +282,7 @@ interpreted.
 | Calendar dates | Same day of year as the Thursday real-time cycle | One model climatology per cycle |
 | Members | **11 (control + 10 EDA), decided 2026-11-05.** Not 5 | Matches ECMWF reforecasts, so the IFS benchmark is like for like. Uses every ERA5 EDA member. With 5 members, probabilities step in 0.2s, so the extreme-quintile ROC has only 6 points and SEDI and reliability are too coarse for detection claims. See §4.3 |
 | Lead | 792 h | AI-WQ week 3 and week 4 windows |
-| Output kept | Weekly means of tas, mslp and pr at 1.5°, HydroBASINS level-3 and admin-1 means, BN diagnostics (jets, regimes, highs) | A few MB per date, not ~256 GB |
+| Output kept | Weekly means of tas, mslp and pr at 1.5°, HydroBASINS level-3 and admin-1 means, BN diagnostics (jets, regimes, highs) | A few MB per date, not ~256 GB. Full archive spec in §4.7 |
 
 **Compute** (~5.5 min per 792 h member on the RTX 5000 Ada; 6.6 min per 960 h measured in
 `LOCAL_GPU_RUN.md`):
@@ -323,6 +323,136 @@ ratio. Globally, for the Greater Horn, and for each target basin.
 
 Hindcasts have 11 members, real time has 50. Fit the calibration on hindcast
 subsamples, and check it on real-time cycles subsampled to the same size before applying it at 50.
+
+### 4.4 Operational version: the weekly hindcast run alongside real time
+
+Added 2026-11-05. Exploration only: nothing below is built.
+
+For each Thursday cycle (e.g. 20261105):
+
+1. **Real time:** 50/51 members from IFS starting states, as now.
+2. **Hindcast:** the same calendar date (5 Nov) in each of 2006–2025, 11 members each
+   (ARCO control + 10 EDA), so 20 × 11 = **220 runs**.
+3. **Calibrate** each real-time product against the same product from those 220 runs (§4.5).
+
+**The hindcast for a calendar date is reusable.** Once 5 Nov 2006–2025 exists, the 5 Nov
+2027 cycle needs only one new year (11 runs). So the full set is a one-off build of ~52 calendar
+weeks, plus a small top-up each year.
+
+**Running at O96 does not save compute.** AIFS-ENS v2 always computes on N320, the grid the
+checkpoint was trained on. O96 is only a write grid (`run_local_icechunk_v2.py`: "N320 is the
+native model grid; O96 is the archive grid"). A member costs ~5.5 GPU-minutes whatever is
+written. 220 runs ≈ **20 GPU-h per week**, plus ~4.7 h for real time.
+
+**Compute levers, in order:**
+- Run the hindcast every other week and pool ±7 days of calendar dates (~10 GPU-h/week
+  averaged, same 20-year climatology).
+- Keep 11 members (§4.1). Cut how often the hindcast runs, never the member count.
+- For the paper, only the event-season dates (§4.1 table).
+- Prefetch the wave bands a week ahead: ~10 min per tape request (`DATA_AVAILABILITY.md` §2.1).
+
+**Storage is where the saving is:** about 100× (§4.7).
+
+**Keep the regrid route identical.** AI-WQ fields for the hindcast must go N320 → 1.5°, exactly
+as the submission does. If the hindcast went N320 → O96 → 1.5° while real time goes N320 → 1.5°,
+the route difference would end up inside the "bias". The O96-vs-N320 RPSS gap is still
+unresolved (`O96-icechunk-store/forecast-evaluation/RPSS_LEADERBOARD_DISCREPANCY.md`). O96 is
+for the archive and driver diagnostics only.
+
+### 4.5 Calibrate products, not input fields
+
+Compute each product (quintile counts, TC counts, RMM phase, basin features) from **raw** model
+output, the same way for hindcast and real time. Then calibrate the product against its own
+20-year hindcast distribution. Do not quantile-map u, v, q separately and derive products
+afterwards: that breaks physical consistency, and vorticity, moisture flux and χ200 come out
+worse than from raw fields. QM also does not fix spread.
+
+| Product | Calibration against the hindcast | Status / blocker it removes |
+|---|---|---|
+| **AI-WQ tas, mslp, pr quintiles** | Quintile edges from the model hindcast per grid point × lead week, pooled ±7 days; then Dirichlet shrinkage (§4.2). Equivalent to QM for quintile probabilities, because the mapping is monotone | Submitted raw today |
+| **MJO phase** (`ts-mjo/MJO_METHOD.md`) | Replace step 5 (ERA5 calendar-day climatology) with the hindcast climatology per lead day; then calibrate the 9-category phase probabilities on the hindcast (amplitude decay with lead) | Mean amplitude 2.84 vs 1.30 observed on 20260924. The §5 leave-one-out test already shows the fix works |
+| **Tropical storm days** (`ts-mjo/TS_STORM_DAYS.md`) | Run the same N320 detector on all 220 hindcast members. Bin real-time counts against **per-basin, per-week model terciles**, not IBTrACS terciles | Known NW Pacific over-count. The doc notes detector and IBTrACS bounds only interchange after bias correction |
+| **CRMA basin features** (layer 3) | None needed: CRMA discretises each feature against the model's own climatology, which is its bias correction. The hindcast supplies that climatology for AIFS | Today AIFS has no per-model climatology (e.g. tp 22–32% drier than IFS, `CRMA_LAYER3.md`) |
+| **Event-study fields** (rainfall and temperature maps, basin totals vs CHIRPS/IMERG) | `xsdba` empirical QM, grouped by lead week, not calendar time | Needed for §5 figures only |
+
+**TC tracking must run on N320 at run time.** At O96 (~112 km) tropical cyclones are smoothed
+out and counts change. Keep only the tracks (kB per member), never fields for later re-tracking.
+
+**Sample size:** 220 samples (~660 with ±7-day pooling) is enough for quintiles and terciles,
+but noisy beyond about the 95th percentile. The 11-vs-50 caveat (§4.3, and `vd.txt`) applies to
+every product.
+
+### 4.6 Tools: xclim and xsdba
+
+| Use | Tool | Variables |
+|---|---|---|
+| AI-WQ quintiles, TC terciles, MJO climatology | Own code (counts against hindcast edges). No library needed | 3 + derived indices |
+| Gridded event-study fields | **`xsdba`** (the bias-adjustment part of xclim, formerly `xclim.sdba`, now a separate package): `EmpiricalQuantileMapping` with lead-week grouping | tp, 2t (maybe 2d) |
+| Drought and flood indicators: SPI, consecutive dry days, R95p, dry spells | **`xclim` indicators** on the corrected tp/2t | derived |
+| Circulation fields (u, v, q, z, χ200, vorticity) | **Not bias-corrected** | — |
+
+`xsdba` is designed for calendar-time climate series. With forecasts, treat each lead week as a
+separate group and pool start dates. That needs a small adapter, not a fork.
+
+### 4.7 Pipeline and archive
+
+```
+each member (hindcast or real time), at run time on N320:
+  ├─ AI-WQ: N320 → 1.5° weekly tas/mslp/pr (raw)          same route as the submission
+  ├─ TS:    N320 detector → tracks
+  ├─ MJO:   1.5° χ200/u850/u200 → ±15° band, daily
+  ├─ CRMA:  crma_layer3_extract (55 basins, loci, regional 1.5°)
+  └─ O96 daily-mean archive of the raw fields (below)
+  → delete the full store
+
+weekly, after real time:
+  calibrate each product against the hindcast products → submit
+  save the correction tables (quintile edges, TS terciles, MJO climatology)
+```
+
+**Archive raw output plus correction tables, not corrected fields.** Corrections change every
+year as the hindcast grows and can be regenerated in minutes; corrected fields cannot be
+un-corrected.
+
+**What the archive holds: the CRMA 39-channel set** (`~/crma/DYNAMICAL_ENS_HYBRID.md`), mapped
+onto AIFS output:
+
+| | Channels | Count |
+|---|---|---|
+| In AIFS output directly | tp, msl, sp, 2t, 2d, 10u, 10v, skt, tcwv (AIFS `tcw`, includes condensate), ro, t850/700/500, gh500 (z/g), u & v at 925/850/700/500/200, q925/850/700/500, w700 | **29** |
+| Derived, not stored | r850, r700 (from t, q); vo850/700/500, d850/700/200 (from u, v on the 1.5° grid, as `s2s_features.py` does) | **8** |
+| Constant | lsm, from the checkpoint's static fields | 1 |
+| Missing | **cape**. Could be approximated from 13-level t/q profiles, but treat it as absent, as layer 3 does | 1 |
+
+Beyond the 39 channels, AIFS also cannot supply OLR (the MJO uses χ200 instead) or SST
+(layer 3 uses `skt` over sea instead).
+
+**Proposed O96 archive:** the 29 direct fields plus cp, swvl1, z200 and u/v/t at 50 hPa
+(stratospheric evidence; `u10`, the 10 hPa wind, is unreliable, see `CRMA_LAYER3.md`). About
+**36 fields as daily means**. Six-hourly detail is captured at run time by the extractors
+(tracks, `tp_mm6h_max`-type layer-3 features), so daily means are enough.
+
+| Product tier | Size per member |
+|---|---|
+| AI-WQ 1.5° weekly tas/mslp/pr | ~2 MB |
+| TS tracks, MJO band means, CRMA layer 3 | < 1 MB (layer 3 is ~2.8 MB per 50-member cycle) |
+| O96 daily archive, 36 fields (float32, before compression) | ~190 MB (≈ 80–100 MB compressed) |
+
+| Totals (estimates) | |
+|---|---|
+| Weekly hindcast, 220 members | ~20 GB |
+| Real time, 51 members | ~5 GB, against ~256 GB per cycle today |
+| One-off build of all 52 calendar weeks | ~1 TB, reusable every year |
+
+### 4.8 Not built yet
+
+- [ ] Extraction at run time. The run script writes a full icechunk store per cycle. "Extract,
+      then delete" per hindcast member needs a temporary per-member store or extraction hooks
+      in the run loop.
+- [ ] MJO step 5 switched to the hindcast climatology (`ts-mjo/mjo_submission.py`).
+- [ ] TS model terciles from the hindcast (`ts-mjo/ts_days.py`, `--tercile-clim`).
+- [ ] Quintile-edge and shrinkage tables per calendar week, and their storage layout.
+- [ ] `xsdba` lead-week adapter for the event-study fields.
 
 ---
 
@@ -521,6 +651,8 @@ Forecasting*, *npj Climate and Atmospheric Science*; *GRL* for a short version.
 3. Wave-band fill: climatology or NaN? Decide from §2.3's test.
 4. Cloud budget for the hindcast burst.
 5. Co-authors and roles.
+6. Operational hindcast cadence: every week (~20 GPU-h) or every other week with ±7-day pooling
+   (~10 GPU-h/week averaged)? See §4.4.
 
 ## 12. Related files
 
@@ -533,3 +665,7 @@ Forecasting*, *npj Climate and Atmospheric Science*; *GRL* for a short version.
 - `../crowd-fahamu/lp.txt`, `../crowd-fahamu/vd.txt`: two AI-WQ teams' post-processing (SPQR,
   hindcast thresholds).
 - `~/crma/scenario-sim/scenarios/*.json`: the 23 event definitions.
+- `../fp16FahamuAIFSv2/ts-mjo/MJO_METHOD.md`, `TS_STORM_DAYS.md`: MJO and tropical-storm-days
+  products, both waiting on a model climatology (§4.5).
+- `../fp16FahamuAIFSv2/epistemic-reasoning-risk/CRMA_LAYER3.md`: layer-3 extraction and its gaps.
+- `~/crma/DYNAMICAL_ENS_HYBRID.md`: the CRMA 39-channel design (§4.7).
