@@ -282,7 +282,7 @@ interpreted.
 | Calendar dates | Same day of year as the Thursday real-time cycle | One model climatology per cycle |
 | Members | **11 (control + 10 EDA), decided 2026-11-05.** Not 5 | Matches ECMWF reforecasts, so the IFS benchmark is like for like. Uses every ERA5 EDA member. With 5 members, probabilities step in 0.2s, so the extreme-quintile ROC has only 6 points and SEDI and reliability are too coarse for detection claims. See §4.3 |
 | Lead | 792 h | AI-WQ week 3 and week 4 windows |
-| Output kept | Weekly means of tas, mslp and pr at 1.5°, HydroBASINS level-3 and admin-1 means, BN diagnostics (jets, regimes, highs) | A few MB per date, not ~256 GB. Full archive spec in §4.7 |
+| Output kept | Weekly means of tas, mslp and pr at 1.5°, HydroBASINS level-3 and admin-1 means, BN diagnostics (jets, regimes, highs) | A few MB per date, not ~256 GB. What to keep: §4.7 |
 
 **Compute** (~5.5 min per 792 h member on the RTX 5000 Ada; 6.6 min per 960 h measured in
 `LOCAL_GPU_RUN.md`):
@@ -351,13 +351,13 @@ written. 220 runs ≈ **20 GPU-h per week**, plus ~4.7 h for real time.
 - For the paper, only the event-season dates (§4.1 table).
 - Prefetch the wave bands a week ahead: ~10 min per tape request (`DATA_AVAILABILITY.md` §2.1).
 
-**Storage is where the saving is:** about 100× (§4.7).
+**Storage is where the saving is:** keep run-time products only, ~3 MB per member (§4.7).
 
 **Keep the regrid route identical.** AI-WQ fields for the hindcast must go N320 → 1.5°, exactly
 as the submission does. If the hindcast went N320 → O96 → 1.5° while real time goes N320 → 1.5°,
 the route difference would end up inside the "bias". The O96-vs-N320 RPSS gap is still
 unresolved (`O96-icechunk-store/forecast-evaluation/RPSS_LEADERBOARD_DISCREPANCY.md`). O96 is
-for the archive and driver diagnostics only.
+kept only for the paper's event-year field archive (§4.7.3).
 
 ### 4.5 Calibrate products, not input fields
 
@@ -394,28 +394,77 @@ every product.
 `xsdba` is designed for calendar-time climate series. With forecasts, treat each lead week as a
 separate group and pool start dates. That needs a small adapter, not a fork.
 
-### 4.7 Pipeline and archive
+### 4.7 Pipeline and what to keep
+
+Revised 2026-11-05: the weekly O96 archive is dropped from the operational design.
 
 ```
 each member (hindcast or real time), at run time on N320:
   ├─ AI-WQ: N320 → 1.5° weekly tas/mslp/pr (raw)          same route as the submission
   ├─ TS:    N320 detector → tracks
-  ├─ MJO:   1.5° χ200/u850/u200 → ±15° band, daily
+  ├─ MJO:   N320 → 1.5° χ200/u850/u200 → ±15° band, daily
   ├─ CRMA:  crma_layer3_extract (55 basins, loci, regional 1.5°)
-  └─ O96 daily-mean archive of the raw fields (below)
-  → delete the full store
+  └─ delete the full store
+     (paper event starting dates only: also write the O96 field archive, §4.7.3)
 
 weekly, after real time:
   calibrate each product against the hindcast products → submit
   save the correction tables (quintile edges, TS terciles, MJO climatology)
 ```
 
-**Archive raw output plus correction tables, not corrected fields.** Corrections change every
-year as the hindcast grows and can be regenerated in minutes; corrected fields cannot be
+#### 4.7.1 What a later year reuses: products, not fields
+
+When the same calendar date comes round a year later (e.g. 5 Nov 2027), refitting needs only the
+**products** saved from the earlier hindcast members, and every one of them was extracted from
+N320 at run time:
+
+| Saved per hindcast member | Extracted from | Used for |
+|---|---|---|
+| AI-WQ 1.5° weekly tas/mslp/pr | N320 → 1.5° directly (the submission route) | quintile edges, shrinkage |
+| Tropical storm tracks | N320 detector | per-basin storm-day terciles |
+| MJO band means (χ200, u850, u200) | N320 → 1.5° | model climatology per lead day |
+| CRMA layer 3 | the run output | the model's own climatology for the BN states |
+
+The new year's 11 members are run, the same products are extracted from N320 and appended, and
+the calibration is refitted. Nothing is regridded back to N320 and no O96 field is read, so there
+is no circularity. **About 3 MB per member, ~0.7 GB per calendar date for 20 years, ~35 GB for
+all 52 calendar weeks.**
+
+Archive **raw products plus correction tables**, not corrected products. Corrections change every
+year as the hindcast grows and can be regenerated in minutes; corrected values cannot be
 un-corrected.
 
-**What the archive holds: the CRMA 39-channel set** (`~/crma/DYNAMICAL_ENS_HYBRID.md`), mapped
-onto AIFS output:
+#### 4.7.2 Why there is no operational O96 archive
+
+- **Calibration never reads it** (§4.7.1).
+- **A new product later is the only use**, and even then only if hindcast *and* real time both
+  compute it from O96. That is the route-consistency problem of §4.4 again. It cannot serve
+  anything needing N320 or 6-hourly data, such as TC tracks.
+- **Cost:** ~36 fields as daily means is ~190 MB per member (≈ 80–100 MB compressed), ~20 GB per
+  weekly hindcast and ~1 TB for all calendar weeks. That is too much for a speculative use.
+
+**If a new product is needed, add it to the extractor and rerun the affected dates.** That is
+cleaner than relying on an archive grid.
+
+#### 4.7.3 For the paper: products for reproducibility, plus O96 for the event years only
+
+Bit-for-bit reproduction by rerunning the model is not possible: FP16 non-determinism reaches
+85–97% of ensemble spread at days 18–33 (`run-pre50r1-dates/README.md`). Reproducibility therefore
+rests on:
+
+1. **Products, scores and correction tables** behind every figure and table. ~GB, deposited on
+   Zenodo. These reproduce the paper exactly.
+2. **Code, checkpoint ID and starting-state requests** (ARCO, CDS EDA, the MARS wave request in
+   `DATA_AVAILABILITY.md`), so others can regenerate a statistically equivalent ensemble.
+3. **Fields for event figures and RQ5 drivers, only for the event starting dates in the event
+   year**, not all 20 climatology years:
+   - **O96 global, daily means, ~36 fields** (below): ~2 GB per date for 11 members, so
+     **~50–100 GB for ~24–48 event starting dates**. Covers drivers outside the region (jets,
+     MJO and ENSO context). Recommended.
+   - Optionally, **N320 over the ICPAC box** for tp and 2t only, for basin-scale rainfall maps.
+
+**Fields in the event-year O96 archive: the CRMA 39-channel set** (`~/crma/DYNAMICAL_ENS_HYBRID.md`),
+mapped onto AIFS output:
 
 | | Channels | Count |
 |---|---|---|
@@ -424,25 +473,16 @@ onto AIFS output:
 | Constant | lsm, from the checkpoint's static fields | 1 |
 | Missing | **cape**. Could be approximated from 13-level t/q profiles, but treat it as absent, as layer 3 does | 1 |
 
-Beyond the 39 channels, AIFS also cannot supply OLR (the MJO uses χ200 instead) or SST
-(layer 3 uses `skt` over sea instead).
-
-**Proposed O96 archive:** the 29 direct fields plus cp, swvl1, z200 and u/v/t at 50 hPa
-(stratospheric evidence; `u10`, the 10 hPa wind, is unreliable, see `CRMA_LAYER3.md`). About
-**36 fields as daily means**. Six-hourly detail is captured at run time by the extractors
-(tracks, `tp_mm6h_max`-type layer-3 features), so daily means are enough.
-
-| Product tier | Size per member |
-|---|---|
-| AI-WQ 1.5° weekly tas/mslp/pr | ~2 MB |
-| TS tracks, MJO band means, CRMA layer 3 | < 1 MB (layer 3 is ~2.8 MB per 50-member cycle) |
-| O96 daily archive, 36 fields (float32, before compression) | ~190 MB (≈ 80–100 MB compressed) |
+Plus cp, swvl1, z200 and u/v/t at 50 hPa (stratospheric evidence; `u10`, the 10 hPa wind, is
+unreliable, see `CRMA_LAYER3.md`): **~36 fields**. AIFS cannot supply OLR (the MJO uses χ200) or
+SST (layer 3 uses `skt` over sea).
 
 | Totals (estimates) | |
 |---|---|
-| Weekly hindcast, 220 members | ~20 GB |
-| Real time, 51 members | ~5 GB, against ~256 GB per cycle today |
-| One-off build of all 52 calendar weeks | ~1 TB, reusable every year |
+| Operational products, per weekly hindcast (220 members) | ~0.7 GB |
+| Operational products, real time (51 members) | ~0.15 GB, against ~256 GB per cycle today |
+| Operational products, all 52 calendar weeks × 20 years | ~35 GB, reusable every year |
+| Paper: event-year O96 field archive | ~50–100 GB, one-off |
 
 ### 4.8 Not built yet
 
