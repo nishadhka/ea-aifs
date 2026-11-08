@@ -1,6 +1,8 @@
 # bc-fp16FahamuAIFSv2 — bias-corrected and calibrated AIFS-ENS v2
 
-**Status: plan only (2026-11-05).** Nothing here is built or run yet.
+**Status (2026-11-08):** the same-date hindcast (§1–3) is still a plan. An **interim
+correction from past real-time cycles** is built and gave the first corrected product,
+20261105 (§0).
 
 A second model entry alongside the raw `../fp16FahamuAIFSv2/`. Same checkpoint
 (`ecmwf/aifs-ens-2.0`), same 50-member real-time run each Thursday. The difference: each
@@ -12,6 +14,40 @@ product calibration, what to keep) and `../paper/DATA_AVAILABILITY.md` (ERA5 sta
 including the 6 wave bands).
 
 ---
+
+## 0. Interim: bias correction from past real-time cycles (built)
+
+Until the hindcast exists, the tas / mslp / pr product is corrected with the bias seen in
+earlier real-time cycles. Only each cycle's `nc_1p5deg` (2.1 GB) is needed, so the O96 and
+N320 stores can be deleted once 3a has run.
+
+| Script | Does |
+|---|---|
+| `past_cycle_bc.py aggregate` | weekly member values per cycle, exactly 3b's aggregation (float64: reproduces 3b's 20261105 file in every cell) |
+| `era5_weekly.py build` | ERA5 weekly tas/mslp/pr from ARCO ERA5T, because the AI-WQ archive has no obs after week 20260824. Same definitions as AI-WQ: tas/mslp 6-hourly mean Mon 00–Sun 18, pr hourly sum Mon 01–Mon 00, every 6th 0.25° point. Matches AI-WQ to 0.0002 K / 0.02 Pa / 0.002 mm rms on 20260727, 0803, 0824 |
+| `past_cycle_bc.py evaluate` | leave-one-cycle-out RPSS (AI-WQ's own scorer) for smoothing σ ∈ {0,1,2,4} grid points × strength a ∈ {0.5,1} |
+| `past_cycle_bc.py apply --date D` | `aifs-run/D_0000/aiwq_bc/ensemble_quintile_probabilities_D_bc.nc` + the bias tables |
+
+tas, mslp: x − a·b, b = mean over cycles of (ensemble mean − ERA5), per lead week and grid point.
+pr: x / r^a, r = forecast/ERA5 ratio, limited to ⅓–3. Cache: `/tank/projects/bc-aifs/`.
+
+Leave-one-out result, 7 cycles (0709, 0813, 0917, 0924, 1001 both weeks, 1008 week 1),
+11 cycle-weeks per variable, computed 2026-11-08:
+
+| Var | Raw RPSS | Corrected | Setting | Cycle-weeks improved |
+|---|---|---|---|---|
+| tas | +0.033 | **+0.111** | σ=0, a=0.5 | 9/11 |
+| mslp | +0.245 | **+0.270** | σ=4, a=0.5 | 9/11 |
+| pr | +0.078 | +0.084 | σ=0, a=0.5 | 7/11, within noise |
+
+Caveats: the setting is chosen on the same cycles, so these numbers are a little
+optimistic. Neighbouring cycles verify on neighbouring weeks, and persistent weather
+anomalies make that look like model bias. 0709 and 0813 are summer cycles from older
+regrid routes. Half strength wins everywhere, which fits a bias estimated from few cycles.
+
+The 51st member (control) comes from HRES `oper`/`wave` step 0, because open data has no
+ENS control (`s3_grib_pkl_input_aifsens_v2_proto.py --control-member 51`,
+checked by `check_control_pkl.py`).
 
 ## 1. What runs each week
 
