@@ -72,12 +72,28 @@ CY50R1_ONLY = ["h1012", "h1214", "h1417", "h1721", "h2125", "h2530", "wmb", "cdw
 MISSING_ABOVE = 9998.0          # ecWAM writes 9999 on land
 
 
+# The whole AIFS-training wave hindcast is in the experiment catalogue, same model, grid
+# and parameters as j1r2 (paper/AIFS_ENS_V2_S2S_EXTREMES_STUDY_PLAN.md section 2.3).
+# The ERA5-forced series match an ERA5 starting state; j1r2 uses operational winds.
+ERA5_FORCED = [(2000, 2015, "ikp6"), (2016, 2023, "ikg0"), (2024, 2025, "itul"),
+               (2026, 2026, "j5rf")]
+
+
+def expver_for(date):
+    """ERA5-forced wave hindcast expver covering YYYYMMDD."""
+    y = int(str(date)[:4])
+    for a, b, e in ERA5_FORCED:
+        if a <= y <= b:
+            return e
+    raise ValueError(f"no ERA5-forced wave hindcast listed for {y}")
+
+
 def rc_path():
     local = os.path.join(HERE, ".ecmwfapirc")
     return local if os.path.exists(local) else os.path.expanduser("~/.ecmwfapirc")
 
 
-def retrieve(date, time, params, target, grid="N320", area=None):
+def retrieve(date, time, params, target, grid="N320", area=None, expver="j1r2"):
     """One MARS request for one cycle. Returns the target path."""
     os.environ.setdefault("ECMWF_API_RC_FILE", rc_path())
     from ecmwfapi import ECMWFDataServer
@@ -85,7 +101,7 @@ def retrieve(date, time, params, target, grid="N320", area=None):
     req = {
         "class": "rd",
         "dataset": "research",
-        "expver": "j1r2",
+        "expver": expver,
         "stream": "wave",
         "type": "an",
         "levtype": "sfc",
@@ -122,16 +138,17 @@ def read_grib(path):
     return out
 
 
-def fetch_cycle(date, time, names, workdir, grid="N320"):
+def fetch_cycle(date, time, names, workdir, grid="N320", expver="j1r2"):
     """Fetch one cycle (date, time) and return {aifs_name: array}."""
     ids = [pid for pid, nm in PARAMS.items() if nm in names]
-    tgt = os.path.join(workdir, f"j1r2_{date}_{time}.grib")
+    tag = "j1r2" if expver == "j1r2" else f"{expver}{'_all' if len(ids) > len(CY50R1_ONLY) else ''}"
+    tgt = os.path.join(workdir, f"{tag}_{date}_{time}.grib")
     if not os.path.exists(tgt):
-        retrieve(date, time, ids, tgt, grid=grid)
+        retrieve(date, time, ids, tgt, grid=grid, expver=expver)
     return read_grib(tgt)
 
 
-def build_state_fields(date, time, workdir, all_wave=False, grid="N320"):
+def build_state_fields(date, time, workdir, all_wave=False, grid="N320", expver="j1r2"):
     """Return {aifs_field: (2, N)} for [t-6h, t], AIFS naming and transforms applied.
 
     The AIFS input state carries two time levels. j1r2 is 6-hourly analyses, so both
@@ -144,10 +161,10 @@ def build_state_fields(date, time, workdir, all_wave=False, grid="N320"):
     per_time = []
     for t in (t0, t1):
         d, hh = t.strftime("%Y%m%d"), t.strftime("%H")
-        got = fetch_cycle(d, hh, names, workdir, grid=grid)
+        got = fetch_cycle(d, hh, names, workdir, grid=grid, expver=expver)
         missing = [n for n in names if n not in got]
         if missing:
-            raise RuntimeError(f"{d} {hh}z: j1r2 returned nothing for {missing}")
+            raise RuntimeError(f"{d} {hh}z: {expver} returned nothing for {missing}")
         per_time.append(got)
         print(f"  {d} {hh}z: {len(got)} params, {per_time[-1][names[0]].size} points")
 
