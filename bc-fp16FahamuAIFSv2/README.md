@@ -45,6 +45,43 @@ optimistic. Neighbouring cycles verify on neighbouring weeks, and persistent wea
 anomalies make that look like model bias. 0709 and 0813 are summer cycles from older
 regrid routes. Half strength wins everywhere, which fits a bias estimated from few cycles.
 
+### 0.1 Same-date hindcast, control only: 5 Nov (built, 2026-11-10)
+
+20 ERA5-started members, 5 Nov 2006–2025, one per year (`era5_state_pkl.py` →
+`hc_date.sh` / `hc_member.sh` → `hc_bc.py`). Each member takes 3.6 min end to end
+(rollout + 3a regrid); temporary stores peak at 265 MB and are deleted, leaving ~40 MB.
+Building each state takes ~7 min from ARCO plus MARS waves; tape waits of up to several
+hours are why `prefetch_waves.py` exists.
+
+**Gate (study plan §2.4, S2S form):** an ERA5-started 20261029 member against that day's
+50 IFS members, weeks 3–4: bias ≤ 0.05 ensemble spread, distance from the ensemble mean
+0.9–1.2× a typical IFS member, flat rank histogram. Starting from ERA5 makes no
+measurable difference at these leads.
+
+**Leave-one-year-out MSE**, significance-masked correction (`sig_a0.5`: only cells whose
+20-year bias is significant at p < 0.05, half strength), 40 cases (20 years × 2 weeks):
+
+| Var | Global (land for tas/pr) | Greater Horn of Africa land | Cases improved, global / GHA |
+|---|---|---|---|
+| tas | −2.7 % | −5.7 % | 36/40 / 30/40 |
+| mslp | +0.0 % | −16.7 % | 26/40 / 31/40 |
+| pr | −2.6 % | −10.0 % | 35/40 / 37/40 |
+
+Biases found over the GHA: mslp +0.8–0.9 hPa (significant on ~2/3 of the region), tas
+−0.15/−0.37 K, pr −3.9/−1.4 mm per week (weeks 3/4). The largest corrections are over the
+Tibetan Plateau (tas up to +13 K, mslp −1.4 hPa ×10), where interpolated forecast vs
+point-sampled ERA5 and the sea-level reduction add to model drift. They are systematic
+against the scoring target, so they stay.
+
+**The past-cycle tables (§0) barely match the 20-year bias** (pattern r −0.18 to +0.29):
+they mostly captured the Sep–Oct 2026 weather and the season, so the §0 numbers are
+inflated by persistence. Prefer the hindcast correction where one exists. For 20261105:
+`aiwq_bc_hc/ensemble_quintile_probabilities_20261105_bchc.nc` changes the modal quintile
+in 3–4 % of cells, against 20–24 % for the past-cycle file.
+
+Not yet: the 10 EDA members (CDS token works, `run-pre50r1-dates/.env`) to reach 220 runs
+and model-climate quintile edges; other calendar dates.
+
 The 51st member (control) comes from HRES `oper`/`wave` step 0, because open data has no
 ENS control (`s3_grib_pkl_input_aifsens_v2_proto.py --control-member 51`,
 checked by `check_control_pkl.py`).
