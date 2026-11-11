@@ -1,8 +1,9 @@
 # bc-fp16FahamuAIFSv2 — bias-corrected and calibrated AIFS-ENS v2
 
-**Status (2026-11-08):** the same-date hindcast (§1–3) is still a plan. An **interim
-correction from past real-time cycles** is built and gave the first corrected product,
-20261105 (§0).
+**Status (2026-11-11):** a 20-year **control** hindcast for 5 Nov is built and corrects
+tas / mslp / pr (§0.1). The hindcast is being extended to **15 variables** (§0.2). The
+220-member version (control + 10 EDA) is not built yet. The past-cycle correction (§0) is
+superseded where a hindcast exists.
 
 A second model entry alongside the raw `../fp16FahamuAIFSv2/`. Same checkpoint
 (`ecmwf/aifs-ens-2.0`), same 50-member real-time run each Thursday. The difference: each
@@ -85,6 +86,77 @@ and model-climate quintile edges; other calendar dates.
 The 51st member (control) comes from HRES `oper`/`wave` step 0, because open data has no
 ENS control (`s3_grib_pkl_input_aifsens_v2_proto.py --control-member 51`,
 checked by `check_control_pkl.py`).
+
+### 0.2 Fifteen variables, 20-year same-date hindcast (in progress, 2026-11-11)
+
+The 20-year hindcast is extended from tas / mslp / pr to 15 variables: the 5 AI-WQ
+variables plus 10 indices chosen for Africa and the Indian Ocean. All 15 come from fields
+the model already writes, so the GPU cost stays the same. Only the extraction, done before
+each member's stores are deleted, gets longer.
+
+#### Variables, definitions, and what each needs
+
+Boxes are lat °N × lon °E; weeks 3 and 4 are lead days 19–25 and 26–32 (AI-WQ's
+forecast periods), and "daily" means lead days 1–33.
+
+| # | Variable | Definition (model fields, box) | Grid / steps read | Kept per member | Truth for 2006–2025 | Correction | AI-WQ? |
+|---|---|---|---|---|---|---|---|
+| 1 | tas | weekly mean `2t` | N320 → 1.5° (3a), 432–792 h, 6-hourly | 1.5° weekly maps | ERA5 (`era5_weekly.py`) | bias (§0.1), then model-climate quintiles | yes |
+| 2 | mslp | weekly mean `msl` | as 1 | as 1 | ERA5 | as 1 | yes |
+| 3 | pr | weekly sum `tp` | as 1 | as 1 | ERA5 | ratio bias, quintiles | yes |
+| 4 | Tropical storm days | tracked storms (`ts-mjo/ts_days.py`: `msl 10u 10v u_850 v_850 t_200 t_300 t_500`), unique (storm, day) pairs per basin per week | N320 sidecar, 432–792 h, 6-hourly | `storm_days(week, basin)` | IBTrACS v04r01 (`/tank/projects/ibtracs`), AI-WQ's `count_nstormdays` | tercile edges per basin and week from the model's own climate | yes |
+| 5 | MJO | VPM/RMM bands from `u_200 v_200` (velocity potential) and `u_850`, `u_200` (`ts-mjo/vpm_index.py --dump-bands`) | O96, 0–792 h, daily means of 6-hourly | daily normalised bands, lead days 1–33 | ERA5 VPM per year (`/tank/projects/era5_vpm_clim`, 1991+) | amplitude scaling and phase offset per lead day | yes |
+| 6 | IOD (DMI) | `skt` west box (−10..10, 50..70) minus east box (−10..0, 90..110) | O96, 0–792 h, daily | daily W, E box means | ERA5 SST (ARCO) | per lead day: bias and variance; terciles at ±0.4 °C on the anomaly | extra |
+| 7 | ITCZ | `tp`-weighted latitude in −20..20, sectors Africa (−20..55), Indian Ocean (55..100), East Africa (30..52) | O96, 0–792 h, daily sums | daily latitude per sector | ERA5 tp (ARCO) | per lead day latitude bias | extra |
+| 8 | Indian Ocean westerlies / Somali Jet | `u_850` (−5..5, 70..90); `u_925`, `v_925`, speed (−5..10, 40..55) | O96, daily | daily box means | ERA5 u, v | bias, terciles | extra |
+| 9 | Soil moisture | `swvl1`, `swvl2` | O96, daily + weekly maps | GHA box daily; Africa weekly maps | ERA5 swvl | bias per cell, terciles | extra |
+| 10 | Mascarene High | `msl` (−35..−20, 40..90) | O96, daily | daily box mean | ERA5 msl | bias, terciles | extra |
+| 11 | Tropical Easterly Jet | `u_150`, `u_200` (0..15, 40..80) | O96, daily | daily box means | ERA5 u | bias, terciles | extra |
+| 12 | African Easterly Jet | `u_600`, `u_700` (10..15, −20..20) | O96, daily | daily box means | ERA5 u | bias, terciles | extra |
+| 13 | Western Indian Ocean waves | `swh`, `mwp` (−12..12, 39..60), sea only | O96, daily + weekly maps | daily box means; weekly maps | ERA5 waves (ARCO) or ecWAM hindcast (MARS) | bias, terciles | extra |
+| 14 | Moisture into East Africa | `tcw` (−5..15, 30..52); 850 hPa flux `q·u`, `q·v` (−5..10, 40..52) | O96, 6-hourly → daily | daily box means; weekly `tcw` maps | ERA5 tcw, q, u, v | bias, terciles | extra |
+| 15 | Heat stress | daily max of `2t` (max of 4 six-hourly values) and daily max wet-bulb temperature (Stull 2011 from `2t`, `2d`), Africa land | O96, 6-hourly | GHA box daily; Africa weekly maps | ERA5 2t, 2d (6-hourly, same daily-max rule) | bias per cell, terciles | extra |
+
+Weekly maps cover the Africa–Indian Ocean domain (−40..40, −25..120) on the O96 cells. The
+daily-max rule for 15 uses the 6-hourly values both for the model and for ERA5, so the
+comparison is like for like (a true daily maximum needs hourly data).
+
+#### Time steps each run must store
+
+| Store | Grid | Steps | Fields | Serves |
+|---|---|---|---|---|
+| main | O96 (40 320 cells) | **all 132 steps, 6–792 h** | all model outputs | 5–15 (daily series need every day from day 1; MJO uses the whole lead) |
+| sidecar | N320 (542 080 points) | **61 steps, 432–792 h** | `msl tp 2t 10u 10v t_200 t_300 t_500 u_850 v_850` | 1–4 (3a regrid; storm tracking at full resolution) |
+
+These are the real-time chain's own settings (tier B), so the hindcast and the real-time
+forecast are processed identically. The extractor (`hc_extract.py`) reads any store, so the
+same code makes the real-time products that get corrected.
+
+#### Cost per member and per date
+
+| | Per member | 20 control members | 220 members |
+|---|---|---|---|
+| GPU, rollout (all steps written to O96) | ~3.6 min | 1.2 h | 13.2 h |
+| Extraction (3a, storm tracking, MJO, indices) | ~1–1.5 min, CPU (estimate) | 0.4 h | 4–5 h, overlaps the next rollout |
+| Temporary stores (deleted per member) | ~4.3 GB (O96 3.2 GB + N320 1 GB) | ~4.3 GB | ~4.3 GB |
+| Kept | ~45 MB (1.5° file 41 MB + products) | 0.9 GB | 10 GB |
+| Starting states | 0.97 GB pkl | 1 GB at a time | 11 GB per year at a time (13–26 GB peak) |
+
+#### Year-by-year run before the Thursday start
+
+The hindcast for Thursday date D uses D in 2006–2025. It is built Monday to Wednesday, so
+the bias tables exist when the real-time run starts on Thursday.
+
+| Day | Control-only (20 runs) | 220 members |
+|---|---|---|
+| Mon | prefetch MARS waves (40 files, absorbs tape waits); ERA5 verification for D+18..D+32 in 2006–2025 (~17 GB transfer, 24 MB kept); IBTrACS and ERA5 VPM already on disk | as control, plus queue the CDS EDA requests (~20 GB) |
+| Tue | states and members, years 2025 → 2006, streamed: ~16 min state build per year (network) overlapping ~5 min GPU per year. **Done in ~5.5 h** | years 2025 → ~2014, 11 members per year (~55 min GPU per year), next year built while the GPU runs |
+| Wed | `hc_bc.py evaluate` + bias tables for all 15 variables | years ~2013 → 2006, then evaluate + bias tables |
+| Thu | real-time cycle (Step 1 → Step 2 → 3a/3b, TS, MJO, `hc_extract.py`), apply the tables, submit raw and corrected | same |
+
+Per year, the order is always: control state (ARCO + MARS) → (EDA perturbed states) →
+rollouts → extraction → delete stores and pkls. After a date is built once, later years
+add only that year's members (1 control, or 11), about 5 min or 1 h of GPU.
 
 ## 1. What runs each week
 

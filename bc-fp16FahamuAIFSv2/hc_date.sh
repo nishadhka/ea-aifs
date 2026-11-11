@@ -20,7 +20,7 @@ while :; do
   todo=0; ran=0
   for y in $(seq $Y1 -1 $Y0); do
     D=${y}${MD}_0000; OUT=$S/hc_nc/$D
-    [ -f "$OUT/aifs_ensemble_forecast_1p5deg_member001.nc" ] && continue
+    [ -f "$OUT/DONE" ] && continue     # all 15 products written (hc_member.sh)
     todo=$((todo+1))
     P=$S/era5_states/$D/input_state_member_001.pkl
     [ -f "$P" ] || continue
