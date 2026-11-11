@@ -16,6 +16,71 @@ including the 6 wave bands).
 
 ---
 
+## Introduction: why bias-correct AIFS, and why this way
+
+### Background
+
+Since mid-2026 the Fahamu team has run **AIFS-ENS v2** (`ecmwf/aifs-ens-2.0`), ECMWF's
+machine-learning ensemble, every Thursday on this box. It is started from the IFS
+open-data analysis, run 792 h (33 days), and its week-3 and week-4 forecasts of tas, mslp
+and pr go to the **AI Weather Quest (AI-WQ)** as quintile probabilities, with tropical-storm
+days and MJO alongside. The same runs feed ICPAC's regional work on Greater Horn of Africa
+droughts and floods at sub-seasonal range (study plan §0).
+
+The submitted product is the **raw** ensemble: each member is counted against AI-WQ's
+20-year ERA5 quintile edges, with no correction. Every operational sub-seasonal system
+calibrates instead. ECMWF's extended-range ENS, NCEP CFSv2 and ECCC all run **reforecasts**
+(hindcasts: the same model started from past dates) and correct the real-time forecast
+against the model's own climate. ECMWF's sub-seasonal AIFS (AIFS-SUBS) is no exception: a
+20-year, 10-member reforecast started from ERA5 recentred on the EDA (`j339`, study plan
+§2.3). No such reforecast is published for AIFS-ENS v2, so the raw product carries
+whatever the model gets systematically wrong.
+
+### What the raw forecasts showed
+
+| Finding | Evidence |
+|---|---|
+| **tas barely beats climatology** | leave-one-out RPSS of the raw product over 7 cycles: tas +0.033, mslp +0.245, pr +0.078 (§0) |
+| **The model drifts with lead.** A 6-hourly autoregressive model run for 132 steps accumulates bias, worst at weeks 3–4, exactly the AI-WQ weeks | lead-dependent bias maps in §0 and §0.1; 20-year hindcast for 5 Nov: significant tas bias over 20–24 % of land, mslp over the Greater Horn +0.8–0.9 hPa on ~2/3 of the region (§0.1) |
+| **The MJO is too strong** | ensemble amplitude 2.84 vs 1.30 observed on 20260924 (§4, step 3) |
+| **Tropical storms are over-counted** in the NW Pacific | §4, step 3 |
+| **The ensemble is overconfident** over East Africa | effective ensemble size ~1.3–1.9 out of 50 (`epistemic-reasoning-risk/CROSS_CYCLE_FINDINGS.md`), which already called a model climatology "the clear priority" |
+| **Different random draws flip the modal quintile** in 28–40 % of cells | `RPSS_LEADERBOARD_DISCREPANCY.md` |
+
+The problem at S2S range is bias, drift and correlated members, not missing spread. That is
+why correction comes before more members or new model work (ranking in §4).
+
+### Why this path
+
+1. **Correct the products, not the model.** The corrections are applied to what is
+   submitted and used (weekly fields, storm counts, MJO indices, regional indices), not to
+   the network or its input fields. Fine-tuning or Bayesian deep learning on the weights is
+   later research (§4); calibration of products is cheap, reversible and standard practice.
+2. **Use a same-date hindcast, because the bias depends on date and lead.** A first,
+   quicker attempt used the bias seen in recent real-time cycles (§0). The 20-year
+   hindcast then showed those tables barely match the model's real November bias (pattern
+   correlation −0.18 to +0.29): with a few recent cycles, the "bias" is mostly that
+   season's weather. Twenty years of the same calendar date average the weather out and
+   leave the model's own error.
+3. **Start the hindcast from ERA5 (route C), because no IFS analyses exist for 2006–2025
+   in the form AIFS needs, and ERA5 is what AIFS was pretrained on.** The 106 atmosphere
+   and land fields come from ARCO-ERA5. The 6 wave-period bands come from the ERA5-forced
+   wave hindcast AIFS was trained on. The gate test shows an ERA5-started member is
+   indistinguishable from the IFS-started members at weeks 3–4 (§0.1), so the hindcast
+   measures the same model behaviour as the real-time run.
+4. **It is affordable on this box.** One member takes 5.3 min of GPU and ~3 GB of
+   temporary disk; nothing large is kept. A 20-member control hindcast per date is
+   ~2 h of GPU, the full 220 members ~16–18 h, and each date is reused every later year
+   (§0.2, §2).
+5. **Extend beyond the competition where it serves the region.** The same hindcast
+   calibrates 10 extra indices chosen for Africa and the Indian Ocean (IOD, ITCZ, Somali
+   Jet, soil moisture, heat stress and others, §0.2) at no extra GPU cost.
+
+The raw entry keeps running unchanged, so every week gives a paired comparison of raw and
+corrected forecasts.
+
+---
+
 ## 0. Interim: bias correction from past real-time cycles (built)
 
 Until the hindcast exists, the tas / mslp / pr product is corrected with the bias seen in
