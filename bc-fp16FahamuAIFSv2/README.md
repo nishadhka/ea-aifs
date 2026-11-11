@@ -38,9 +38,30 @@ whatever the model gets systematically wrong.
 
 ### What the raw forecasts showed
 
+**The raw product is already competitive.** AI-WQ leaderboard, SON 2026, period-aggregated
+RPSS after competition week 8 (starts 13 Aug – 1 Oct, published 6 Nov 2026; from the
+leaderboard's `response.json`):
+
+| | Rank (of 31 models) | Average | tas | mslp | pr | ECMWF dynamical: average / tas | Leader (SPQRnow): average / tas |
+|---|---|---|---|---|---|---|---|
+| Week 3 (days 19–25) | #16 | 0.196 | **0.141** | **0.336** | 0.111 | 0.193 / 0.191 | 0.231 / 0.227 |
+| Week 4 (days 26–32) | #17 | 0.161 | **0.063** | **0.343** | 0.078 | 0.168 / 0.161 | 0.206 / 0.196 |
+
+It ranked in the top 10 through most of the period (week 3: #9–10 after weeks 3–6;
+week 4: #5–8 after weeks 1, 2, 4, 5), then weekly scores of 0.112 / 0.053 in week 7 pulled it
+to #16 / #17. In week 3 it beats ECMWF's dynamical model on average, and its week-4 **mslp is
+the best of all models**. **tas is the weak variable**: 0.141 and 0.063, against 0.191 and 0.161
+for ECMWF's dynamical model. Matching ECMWF on tas alone, holding mslp and pr fixed, would give
+an average of ~0.213 / ~0.194, about #7 / #5 on the same table.
+
+So the correction is aimed where the score is lost: **tas first, pr second; mslp is left raw
+for AI-WQ** (the hindcast also finds mslp correction neutral globally, §0.1) and corrected only
+for the regional products, where its Greater Horn bias matters.
+
 | Finding | Evidence |
 |---|---|
-| **tas barely beats climatology** | leave-one-out RPSS of the raw product over 7 cycles: tas +0.033, mslp +0.245, pr +0.078 (§0) |
+| **tas is the weakest variable** | leaderboard above. Locally, the raw leave-one-out RPSS over 7 cycles is tas +0.033, mslp +0.245, pr +0.078 (§0). It includes two summer cycles and is harsher than the official score, but it points the same way |
+| **Week-to-week scores swing widely** | weekly variable-averaged RPSS ranges 0.053–0.260 across the 8 SON weeks (rank #4 to #28) |
 | **The model drifts with lead.** A 6-hourly autoregressive model run for 132 steps accumulates bias, worst at weeks 3–4, exactly the AI-WQ weeks | lead-dependent bias maps in §0 and §0.1; 20-year hindcast for 5 Nov: significant tas bias over 20–24 % of land, mslp over the Greater Horn +0.8–0.9 hPa on ~2/3 of the region (§0.1) |
 | **The MJO is too strong** | ensemble amplitude 2.84 vs 1.30 observed on 20260924 (§4, step 3) |
 | **Tropical storms are over-counted** in the NW Pacific | §4, step 3 |
