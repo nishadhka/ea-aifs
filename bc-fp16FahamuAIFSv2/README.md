@@ -91,7 +91,7 @@ why correction comes before more members or new model work (ranking in §4).
    measures the same model behaviour as the real-time run.
 4. **It is affordable on this box.** One member takes 5.3 min of GPU and ~3 GB of
    temporary disk; nothing large is kept. A 20-member control hindcast per date is
-   ~2 h of GPU, the full 220 members ~16–18 h, and each date is reused every later year
+   ~1.8 h of GPU, the full 220 members ~19 h, and each date is reused every later year
    (§0.2, §2).
 5. **Extend beyond the competition where it serves the region.** The same hindcast
    calibrates 10 extra indices chosen for Africa and the Indian Ocean (IOD, ITCZ, Somali
@@ -222,10 +222,10 @@ same code makes the real-time products that get corrected.
 
 | | Per member | 20 control members | 220 members |
 |---|---|---|---|
-| GPU, rollout (all steps written to O96) | ~3.6 min | 1.2 h | 13.2 h |
-| Extraction (3a, storm tracking, MJO, indices) | ~1–1.5 min, CPU (estimate) | 0.4 h | 4–5 h, overlaps the next rollout |
-| Temporary stores (deleted per member) | ~4.3 GB (O96 3.2 GB + N320 1 GB) | ~4.3 GB | ~4.3 GB |
-| Kept | ~45 MB (1.5° file 41 MB + products) | 0.9 GB | 10 GB |
+| GPU, rollout (all steps written to O96) | 4 min 50 s (measured) | 1.6 h | 17.7 h |
+| Extraction (3a, storm tracking, MJO, indices) | 30 s, CPU (measured) | 0.2 h | 1.8 h |
+| Temporary stores (deleted per member) | 3.1 GB (O96 2.1 GB + N320 1.0 GB, measured) | 3.1 GB | 3.1 GB |
+| Kept | ~42 MB (1.5° file 41 MB + products, measured) | 0.85 GB | 9.2 GB |
 | Starting states | 0.97 GB pkl | 1 GB at a time | 11 GB per year at a time (13–26 GB peak) |
 
 #### Year-by-year run before the Thursday start

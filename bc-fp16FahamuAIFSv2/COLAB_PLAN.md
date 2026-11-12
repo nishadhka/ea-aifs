@@ -2,7 +2,8 @@
 
 Plan for moving the hindcast (README §0.2, up to 220 members per date) from this box to
 Google Colab, driven from the terminal with the Colab CLI and paid with Colab Pro compute
-units. **Status: plan. Nothing has run on Colab yet.** §5 is the test to run first.
+units. **Status: plan. Nothing has run on Colab yet.** §6 is the test to run first; §5 lists
+the routines and expected run times for each ensemble size.
 
 ## 1. Why
 
@@ -81,9 +82,90 @@ Cost per date for 220 members, at ~$0.10 per compute unit (100 for $9.99). Estim
 | Bucket: 214 GB of pkls kept ~1 week, then deleted | | | ~$1 |
 
 All 52 dates at 220 members: ~$250–2,000 on L4, ~$300–1,400 on A100. The L4 range is wide
-because its speed for this model is not measured; the test in §5 fixes that.
+because its speed for this model is not measured; the test in §6 fixes that.
 
-## 5. Test plan (run first)
+## 5. Routines and expected durations, by ensemble size
+
+### 5.1 Three ensemble sizes per date
+
+So far the hindcast is **control only**: one ERA5-started member per year (README §0.1–0.2).
+Adding EDA-perturbed members gives what a single member cannot:
+
+| Size per date | Runs | What it supports |
+|---|---|---|
+| **Control only** (built for 5 Nov) | 20 = 20 years × 1 | mean bias per lead; model-climate tercile edges (20 values); MJO amplitude/phase map. Leave-one-out checks are deterministic (error, hit rate) |
+| **Control + 4 EDA** | 100 = 20 × 5 | adds **spread vs error**, i.e. whether the real-time ensemble is over- or under-confident (README: effective ensemble size ~1.3–1.9 over East Africa); first probabilistic (RPSS) leave-one-out check |
+| **Control + 10 EDA** | 220 = 20 × 11 | the ECMWF-style reforecast size: steadier bias, tercile edges from 220 values, full reliability calibration |
+
+The year-to-year weather is shared by the members of one year, so extra members mainly reduce
+the member-noise part of the bias estimate, not the year-to-year part.
+
+### 5.2 Routines, in order, per date D
+
+| # | Routine | Script | Status | Runs where |
+|---|---|---|---|---|
+| A1 | Control starting state per year: ARCO (100 fields) + MARS ecWAM waves (12 fields) | `era5_state_pkl.py`, `prefetch_waves.py` | built | CPU (Colab Phase A) |
+| A2 | EDA members per year from CDS (`ensemble_members`, 0.5°, 3-hourly), 100 fields × 2 times | to write: `era5_eda_perturb.py` | **not built** | CPU |
+| A3 | Perturbed states: control + (EDA member − EDA mean), regridded to N320; waves unperturbed | to write: `era5_eda_perturb.py` | **not built** | CPU |
+| A4 | Truth: ERA5 weekly tas/mslp/pr (ARCO), index truth (CDS, clipped), IBTrACS and AI-WQ MJO (on disk) | `era5_weekly.py`, `era5_truth_indices.py`, `hc_bc15.py` | built | CPU |
+| B1 | Rollout, 792 h: O96 all steps + N320 sidecar 432–792 h | `run_local_icechunk_v2.py` via `hc_member.sh` | built | GPU (Colab Phase B) |
+| B2 | Extraction: 3a, storm days, MJO bands, 10 indices; delete stores | `hc_member.sh`, `hc_extract.py` | built | CPU on the GPU runtime |
+| B3 | Claim/skip worker, products to the bucket | to write: `colab_gpu_worker.py` | **not built** | GPU runtime |
+| C1 | Evaluation (leave-one-year-out) and bias tables | `hc_bc.py`, `hc_bc15.py` | built | local |
+| C2 | Apply to the Thursday real-time forecast | `hc_bc.py apply`, `hc_bc15.py apply` | built | local |
+
+### 5.3 Measured on this box (5 Nov, control only)
+
+| Routine | Measured |
+|---|---|
+| A1 control state | ARCO fetch 410–470 s (link ~1.4–3 MB/s); total ~16 min per year with waves and writing; MARS waves seconds when on disk, up to ~3 h on tape; frequent network failures needed retries |
+| A4 tas/mslp/pr truth | 432 MB per week from ARCO, 40 weeks per date |
+| A4 index truth | ~6.5 min and ~90–106 MB per year from CDS (clipped, 1°) |
+| B1 + B2 | **5.3 min per member** (rollout 4 min 50 s with all O96 steps; extraction 30 s); stores 3.1 GB peak; 41–42 MB kept |
+| C1 | tas/mslp/pr evaluation ~5 min; variables 4–15 a few minutes |
+
+### 5.4 Expected durations per date
+
+GPU time per member: this box 5.3 min (measured); Colab L4 ~7–22 min and A100 ~3–5 min
+(estimates until test 4 of §6). Compute units at ~1.7–5 per hour for L4 and ~5–15 for A100
+(measured by others), ~$0.10 per unit.
+
+| | Control only (20) | Control + 4 EDA (100) | Control + 10 EDA (220) |
+|---|---|---|---|
+| **A1** control states | local ~5.3 h; Colab ~0.3–1 h (estimate) + any tape wait | same as 20 (the control is shared) | same as 20 |
+| **A2–A3** EDA + perturbed states | — | CDS ~2–5 h for 20 years (queue-bound, same anywhere); building ~1 min per state | same CDS volume (~20 GB); ~200 states to build |
+| **A4** truth | local ~1–2 h (17 GB ARCO + CDS); Colab ~1 h (CDS-bound) | same | same |
+| **B** on this box | **1.8 h** | **8.8 h** | **19.4 h** |
+| **B** on 1 Colab L4 | 2.3–7.3 h, 4–37 CU (~$0.4–4) | 12–37 h, 20–183 CU (~$2–18) | 26–81 h, 44–403 CU (~$4–40) |
+| **B** on 1 Colab A100 | 1–1.7 h, 5–25 CU (~$0.5–2.5) | 5–8 h, 25–125 CU (~$2.5–12.5) | 11–18 h, 55–275 CU (~$5.5–27.5) |
+| **B** on 3 Colab runtimes at once | ÷3 wall time, same CU | ÷3 | ÷3 |
+| **C** evaluate + apply | ~10 min local | ~15 min | ~20 min |
+| Bucket, transient | ~20 GB of pkls | ~100 GB | ~214 GB |
+| Kept per date | ~0.85 GB | ~4.2 GB | ~9.2 GB (or ~0.3 GB without the 1.5° files) |
+
+All 52 dates once (the one-off build; afterwards each date adds only that year's members):
+
+| | Control only | Control + 4 EDA | Control + 10 EDA |
+|---|---|---|---|
+| Runs | 1 040 | 5 200 | 11 440 |
+| This box, GPU | ~3.8 days | ~19 days | ~42 days |
+| Colab A100, compute units | ~260–1 300 | ~1 300–6 500 | ~2 900–14 300 |
+| Colab L4, compute units | ~200–1 900 | ~1 000–9 500 | ~2 300–21 000 |
+
+### 5.5 Week before a Thursday start, with Colab
+
+| Day | Control only | Control + 4 EDA | Control + 10 EDA |
+|---|---|---|---|
+| Mon | A1 + A4 on a Colab CPU runtime (~1–2 h); prefetch MARS waves | + A2 CDS requests queued | + A2 |
+| Tue | B on one GPU runtime: done within ~2–7 h | A3, then B on 2–3 runtimes (~4–12 h wall) | A3, then B on 3 runtimes (~4–27 h wall) |
+| Wed | C1 locally (~10 min) | B continues if needed; C1 | B continues; C1 |
+| Thu | real-time run locally; C2 applies the tables | same | same |
+
+The control-only size fits a single Monday–Tuesday. 100 runs fit Tuesday–Wednesday on 2–3
+runtimes. 220 fit only if the L4 turns out fast or A100 runtimes are available; otherwise
+build those dates ahead of time, once, and reuse them every year.
+
+## 6. Test plan (run first)
 
 | # | Test | Measures | Pass mark |
 |---|---|---|---|
@@ -101,7 +183,7 @@ Decision after test 4:
 | 8–15 min | A100 for the build if its cost per member is lower; otherwise this box when free plus L4 for overflow |
 | ≳ 15 min | keep GPU work local; use Colab only for Phase A |
 
-## 6. Colab limits to design around
+## 7. Colab limits to design around
 
 - **The GPU type is not guaranteed;** runtimes have lifetime and idle limits; Pro runs only a
   few runtimes at once. Hence the claim-and-skip worker and DONE markers in the bucket.
@@ -116,7 +198,7 @@ Decision after test 4:
   `run_local_icechunk_v2.py`, `hc_extract.py`, ...), installed from a checkout or a generated
   bundle like `make_colab_bundle.py` does, so cloud and local results cannot drift apart.
 
-## 7. Needed before test 1
+## 8. Needed before test 1
 
 - The Colab CLI installed and logged in on this box (the login is interactive and needs the
   account owner).
