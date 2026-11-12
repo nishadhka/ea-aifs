@@ -72,7 +72,7 @@ def aggregate(cycle):
     if os.path.exists(out):
         print(f"{cycle}: cached")
         return
-    files = sorted(glob.glob(os.path.join(nc_dir(cycle), "*.nc")))
+    files = sorted(glob.glob(os.path.join(nc_dir(cycle), "aifs_ensemble_forecast_1p5deg_member*.nc")))
     if not files:
         raise SystemExit(f"{cycle}: no member files in {nc_dir(cycle)}")
     # float64: in float32 ~10 cells per field land on the other side of a quintile edge vs 3b

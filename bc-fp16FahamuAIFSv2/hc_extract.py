@@ -93,23 +93,32 @@ def daily(x, how="mean"):
     return {"mean": np.nanmean, "sum": np.nansum, "max": np.nanmax}[how](x, axis=1)
 
 
+# six-hourly fields the indices need; tp is the accumulation over each 6 h step (m)
+FIELDS = ("skt", "u_850", "u_925", "v_925", "swvl1", "swvl2", "msl", "u_150", "u_200",
+          "u_600", "u_700", "swh", "mwp", "tcw", "q_850", "v_850", "2t", "2d", "tp")
+
+
 def extract(store, member, init, tag=None):
+    """Read one member of an O96 store and compute the indices."""
     g = open_store(store, tag)
     lat = np.asarray(g["latitude"][:], np.float64)
     lon180 = ((np.asarray(g["longitude"][:], np.float64) + 180) % 360) - 180
     nt = g["msl"].shape[1]
     if nt < 4 * NDAYS:
         raise SystemExit(f"{store}: {nt} steps, need {4 * NDAYS} (write all 6-792 h)")
-    land = land_mask(lat, lon180)
-    rd = lambda v: np.asarray(g[v][member, : 4 * NDAYS, :], np.float32)
-
-    six = {}                                      # six-hourly fields actually needed
-    for v in ("skt", "u_850", "u_925", "v_925", "swvl1", "swvl2", "msl", "u_150",
-              "u_200", "u_600", "u_700", "swh", "mwp", "tcw", "q_850", "v_850", "2t",
-              "2d", "tp"):
-        six[v] = rd(v)
+    six = {v: np.asarray(g[v][member, : 4 * NDAYS, :], np.float32) for v in FIELDS}
     if not np.isfinite(six["msl"]).all():
         raise SystemExit(f"{store}: NaN in msl - not every step was written")
+    out = compute(six, lat, lon180, land_mask(lat, lon180))
+    out["meta"] = meta(init, member, os.path.abspath(store), tag)
+    return out
+
+
+def compute(six, lat, lon180, land):
+    """Indices from six-hourly arrays (132, n) on any set of points (model O96 cells or
+    an ERA5 grid). Step i is lead hour 6(i+1); tp is the accumulation over that step.
+    era5_truth_indices.py calls this same function, so model and truth share one
+    definition."""
     day = {v: daily(six[v]) for v in ("skt", "u_850", "u_925", "v_925", "swvl1", "swvl2",
                                        "msl", "u_150", "u_200", "u_600", "u_700", "swh",
                                        "mwp", "tcw")}
@@ -146,15 +155,17 @@ def extract(store, member, init, tag=None):
             x = day[f][idx][:, dom]
             wk.append(np.nansum(x, 0) if f == "tp" else np.nanmean(x, 0))
         out[f"week_{f}"] = np.stack(wk).astype(np.float32)
+    return out
 
-    out["meta"] = np.array(json.dumps(dict(
-        init=init, member=int(member), store=os.path.abspath(store), tag=tag,
+
+def meta(init, member, source, tag=None):
+    return np.array(json.dumps(dict(
+        init=init, member=int(member), store=source, tag=tag,
         lead_days=f"1..{NDAYS}", weeks={k: [min(v), max(v)] for k, v in WEEKS.items()},
         boxes={k: dict(field=f, box=b, mask=m) for k, (f, b, m) in BOXES.items()},
         itcz_sectors=ITCZ_SECTORS, domain=DOMAIN,
         notes="tmax/twmax: max of the four 6-hourly values; twmax by Stull (2011); "
               "tp daily sums in mm; skt/tmax/twmax deg C except skt (K)")))
-    return out
 
 
 if __name__ == "__main__":
