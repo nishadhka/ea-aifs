@@ -244,6 +244,30 @@ Per year, the order is always: control state (ARCO + MARS) → (EDA perturbed st
 rollouts → extraction → delete stores and pkls. After a date is built once, later years
 add only that year's members (1 control, or 11), about 5 min or 1 h of GPU.
 
+### 0.3 Fifteen-variable results, 5 Nov, control only (2026-11-12)
+
+20 ERA5-started members (one per year, 2006–2025) with all 15 products (`hc_member.sh`),
+against ERA5 (tas/mslp/pr; indices through `era5_truth_indices.py`, the same
+`hc_extract.compute()` as the model), IBTrACS (storm days) and AI-WQ RMM (MJO). Full tables:
+`/tank/projects/bc-aifs/hc15_eval_1105.md`. Leave-one-year-out throughout; with one member
+per year the scores are deterministic (error, hit rate), so they test whether a bias is
+stable, not whether probabilities are reliable (COLAB_PLAN.md §5.1).
+
+| Variable | Result | Use for 20261105 |
+|---|---|---|
+| tas | −4 % error, 16/20 years improved in both weeks | corrected at half strength |
+| pr | −3.3 % error, 19/20 and 16/20 years improved | corrected at half strength |
+| mslp | no gain (9–10/20 years) | **raw** (best on the AI-WQ leaderboard already) |
+| Tropical storm days | model-climate terciles no better than raw (NWP week 3 worse: hit 0.60 vs 0.70); most late-Nov basin-weeks are not scoreable by AI-WQ's rule (observed counts mostly 0). Count biases: NWP under-counted (1.4 vs 2.5 and 0.6 vs 1.8 days), ATL over-counted (1.1 vs 0.3) | **raw**; needs more members or pooled dates |
+| MJO | per lead-bin map onto RMM: category hit 0.34→0.40 (days 19–25), 0.32→0.40 (26–33); RMM error 1.51→1.30, 1.45→1.33 | file written, **not validated for real time**: real-time members' amplitude (~3.1 at days 10–19) is about twice the hindcast members' (~1.5). Test ERA5 vs IFS starts on the same date before using it |
+| Indices (24 weekly series) | bias removal helps where the bias is significant (|t| > 2): soil moisture, Somali Jet v925 and speed (week 3), TEJ, Africa ITCZ (week 3), moisture flux, wet-bulb; non-significant ones get slightly worse, so they are left raw | corrected only where it lowered the leave-one-out error; tercile probabilities against the model's own climate |
+| Weekly maps (Africa–Indian Ocean) | MSE change domain / Greater Horn land: swvl1 −31…−34 %, swvl2 −40…−44 %, skt −27…−32 %, tmax −16…−23 %, wet-bulb max −18…−30 %, tp −6…−8 % / −20 %, swh −1…−3 % / −12…−21 %, mwp −10…−17 %, tcw −2…−4 % / −6…−11 % | corrected (significance-masked, half strength) |
+
+Files for 20261105 in `aifs-run/20261105_0000/aiwq_bc_hc/`: `ensemble_quintile_probabilities_20261105_bchc.nc`
+(tas and pr corrected, mslp raw), `mjo_probs_20261105_bchc.nc` (not validated),
+`ts_days_probs_20261105_bchc.nc` (flagged not for submission), `indices_20261105_bchc.nc`,
+`weekly_maps_20261105_bchc.nc`. None has been submitted.
+
 ## 1. What runs each week
 
 | | Real time (shared with the raw entry) | Hindcast (new) |

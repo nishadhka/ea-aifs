@@ -121,7 +121,9 @@ def collect(md, y0, y1):
 
 # ------------------------------------------------------------------ helpers
 def terciles(x):
-    return np.percentile(np.asarray(x, float), [100 / 3, 200 / 3])
+    # rounded: np.percentile gave 1.0000000000000018 for integer storm counts, which put
+    # a count of exactly 1 in "near" instead of "above" (ties at an edge are common)
+    return np.round(np.percentile(np.asarray(x, float), [100 / 3, 200 / 3]), 6)
 
 
 def cat(x, lo, hi):
@@ -315,7 +317,10 @@ def apply(date):
     ds["tercile_bounds"] = (("week", "basin", "bound"), bounds)
     ds.attrs.update(tercile_source=f"MODEL climate: {n}-year same-date hindcast {md} "
                                    f"({yrs[0]}-{yrs[-1]}), bc-fp16FahamuAIFSv2/hc_bc15.py",
-                    degenerate_model_terciles=", ".join(degen) or "none")
+                    degenerate_model_terciles=", ".join(degen) or "none",
+                    recommendation="NOT for submission: with one hindcast member per year the "
+                                   "model-climate terciles did not beat the raw forecast "
+                                   "leave-one-year-out (hc15_eval); submit the raw TS file")
     f_ts = f"{out}/ts_days_probs_{date}_bchc.nc"
     ds.to_netcdf(f_ts)
 
@@ -369,7 +374,37 @@ def apply(date):
                           f"{n}-year climate; bc-fp16FahamuAIFSv2/hc_bc15.py"))
     f_idx = f"{out}/indices_{date}_bchc.nc"
     ids.to_netcdf(f_idx)
-    for f in (f_ts, f_mjo, f_idx):
+
+    # ---- weekly maps: ensemble mean on the ERA5 1 deg points, significance-masked bias
+    from scipy import stats
+    t0 = T[yrs[0]]["idx"]
+    lat1, lon1 = t0["dom_lat"], t0["dom_lon"]
+    nn_h = nn_map(M[yrs[0]]["idx"]["dom_lat"], M[yrs[0]]["idx"]["dom_lon"], lat1, lon1)
+    nn_r = nn_map(E[0]["dom_lat"], E[0]["dom_lon"], lat1, lon1)
+    tcrit = stats.t.ppf(0.975, n - 1)
+    fields = ("swvl1", "swvl2", "tmax", "twmax", "tcw", "swh", "mwp", "skt", "tp")
+    mv = {}
+    for f in fields:
+        raw_m, cor_m = [], []
+        for wi in range(2):
+            m = np.stack([M[y]["idx"][f"week_{f}"][wi][nn_h] for y in yrs]).astype(float)
+            o = np.stack([T[y]["idx"][f"week_{f}"][wi] for y in yrs]).astype(float)
+            d = m - o
+            b = d.mean(0); tt = b / (d.std(0, ddof=1) / np.sqrt(n) + 1e-12)
+            tab = np.where(np.abs(tt) > tcrit, 0.5 * b, 0.0)
+            x = np.nanmean(np.stack([e[f"week_{f}"][wi][nn_r] for e in E]), 0)
+            raw_m.append(x); cor_m.append(x - np.nan_to_num(tab))
+        mv[f"{f}_raw"] = (("week", "point"), np.stack(raw_m))
+        mv[f"{f}_corrected"] = (("week", "point"), np.stack(cor_m))
+    mp = xr.Dataset(mv, coords=dict(week=list(WEEKS), lat=("point", lat1), lon=("point", lon1),
+                                    land=("point", t0["dom_land"])),
+                    attrs=dict(forecast_date=date, n_members=len(E), grid="ERA5 1 deg points, "
+                               "Africa-Indian Ocean domain; model O96 cells mapped by nearest",
+                               method=f"weekly ensemble means; per-cell {n}-year hindcast bias kept "
+                                      f"where significant (p<0.05) and removed at half strength"))
+    f_map = f"{out}/weekly_maps_{date}_bchc.nc"
+    mp.to_netcdf(f_map)
+    for f in (f_ts, f_mjo, f_idx, f_map):
         print(f"wrote {f}")
     if degen:
         print(f"  TS: model terciles degenerate (not scoreable by AI-WQ's rule) for {degen}")
