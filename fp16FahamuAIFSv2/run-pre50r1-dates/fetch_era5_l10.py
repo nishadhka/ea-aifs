@@ -69,7 +69,13 @@ def token():
     tok = os.environ.get("CDSAPI_KEY")
     if tok:
         return tok
-    sys.exit("no CDS token: expected 'ak=<uuid>' in .env or $CDSAPI_KEY")
+    # the cdsapi client's own file: "key: <token>" in $CDSAPI_RC or ~/.cdsapirc
+    for path in (os.environ.get("CDSAPI_RC", ""), os.path.expanduser("~/.cdsapirc")):
+        if path and os.path.exists(path):
+            for line in open(path):
+                if line.strip().startswith("key:"):
+                    return line.split(":", 1)[1].strip()
+    sys.exit("no CDS token: expected 'ak=<uuid>' in .env, $CDSAPI_KEY or key: in ~/.cdsapirc")
 
 
 def _req(url, data=None, tok=None):

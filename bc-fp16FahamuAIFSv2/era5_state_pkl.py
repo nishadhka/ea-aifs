@@ -113,7 +113,9 @@ def wave_fields(t1, workdir):
     d = t1.strftime("%Y%m%d")
     ev = J.expver_for(d)
     print(f"  waves: {ev} (ERA5-forced ecWAM Cy50r1) from MARS")
-    f = J.build_state_fields(d, t1.strftime("%H"), workdir, all_wave=True, expver=ev)
+    from api_polite import polite
+    with polite("mars"):                  # one MARS request at a time per machine
+        f = J.build_state_fields(d, t1.strftime("%H"), workdir, all_wave=True, expver=ev)
     if os.path.exists(REF_WAVE_MASK):
         ref = np.load(REF_WAVE_MASK)
         # reconcile_mask wants the state shape (2, N), like the swh field it reads from a pkl

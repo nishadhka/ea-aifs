@@ -50,14 +50,16 @@ case $CMD in
     T=$(mktemp --suffix=.tgz)
     ( cd "$ROOT" && tar czf "$T" --exclude='*.png' --exclude='*.txt' --exclude='__pycache__' \
       --exclude='loadtest_artifacts' --exclude='dev-test' \
-      --exclude='epistemic-reasoning-risk' --exclude='.ecmwfapirc' --exclude='*.pkl' \
+      --exclude='epistemic-reasoning-risk' --exclude='.ecmwfapirc' --exclude='.cdsapirc' --exclude='.env' --exclude='*.pkl' \
       s3_grib_pkl shared/aifs_n320_grib_1p5defg_nc_cli.py fp16FahamuAIFSv2/*.py \
       fp16FahamuAIFSv2/ts-mjo fp16FahamuAIFSv2/run-pre50r1-dates fp16FahamuAIFSv2/O96-icechunk-store/*.py bc-fp16FahamuAIFSv2 )
     scp -q -F "$CFG" "$T" "$NAME":/content/code.tgz
     $SSH 'mkdir -p /content/ea-aifs && tar xzf /content/code.tgz -C /content/ea-aifs && echo code pushed' </dev/null
     rm -f "$T"
     RC=$HERE/../.ecmwfapirc; [ -f "$RC" ] || RC=$HOME/.ecmwfapirc
-    if [ -f "$RC" ]; then $SSH 'umask 077; cat > /root/.ecmwfapirc' < "$RC"; echo "MARS key pushed"; fi ;;
+    if [ -f "$RC" ]; then $SSH 'umask 077; cat > /root/.ecmwfapirc' < "$RC"; echo "MARS key pushed"; fi
+    RC=$HERE/../.cdsapirc; [ -f "$RC" ] || RC=$HOME/.cdsapirc
+    if [ -f "$RC" ]; then $SSH 'umask 077; cat > /root/.cdsapirc' < "$RC"; echo "CDS key pushed"; fi ;;
   creds)
     source-coop creds --format env >/dev/null 2>&1 || { echo "source-coop creds failed: log in again"; exit 1; }
     source-coop creds --format env 2>/dev/null | $SSH 'umask 077; cat > /root/.sc.env; echo "source.coop credentials in /root/.sc.env"'

@@ -14,11 +14,16 @@ import os
 import shutil
 import sys
 
-sys.path.insert(0, "/home/ezra/ea-aifs/fp16FahamuAIFSv2/run-pre50r1-dates")
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(os.environ.get("EA_AIFS_ROOT", os.path.dirname(HERE)),
+                                "fp16FahamuAIFSv2", "run-pre50r1-dates"))
 import fetch_j1r2 as J  # noqa: E402
+from api_polite import polite  # noqa: E402
 
-CACHE = "/tank/projects/bc-aifs/mars_waves"
-STAGE = "/tank/projects/bc-aifs/mars_waves_stage"
+BC_CACHE = os.environ.get("BC_CACHE", "/tank/projects/bc-aifs")
+CACHE = f"{BC_CACHE}/mars_waves"
+STAGE = f"{BC_CACHE}/mars_waves_stage"
 
 md, y0, y1 = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
 os.makedirs(STAGE, exist_ok=True)
@@ -34,7 +39,8 @@ for y in range(y0, y1 + 1):
             continue
         tmp = os.path.join(STAGE, name)
         try:
-            J.retrieve(d, hh, ids, tmp, grid="N320", expver=ev)
+            with polite("mars"):
+                J.retrieve(d, hh, ids, tmp, grid="N320", expver=ev)
             shutil.move(tmp, os.path.join(CACHE, name))   # same filesystem: atomic rename
             print(f"{name}: fetched", flush=True)
         except Exception as e:
