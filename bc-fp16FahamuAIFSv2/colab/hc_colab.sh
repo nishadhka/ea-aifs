@@ -66,7 +66,7 @@ case $CMD in
     source-coop creds 2>/dev/null | python3 -c "import json,sys; print('expire', json.load(sys.stdin)['Expiration'])" ;;
   sh)     $SSH "$1" </dev/null ;;
   phaseA)
-    $SSH "mkdir -p /content/bc; test -f /content/bc/ref_wave_land_n320.npy || echo 'WARNING: no /content/bc/ref_wave_land_n320.npy (see COLAB_RUNBOOK.md)'" </dev/null
+    $SSH "mkdir -p /content/bc; test -f /content/bc/ref_wave_land_n320.npy || echo 'WARNING: no /content/bc/ref_wave_land_n320.npy (control builds only; see RUNBOOK_20261105.md section 4.1)'" </dev/null
     M=$1 Y=$2 J=${3:-4}; shift 3 2>/dev/null || shift $#
     bg "env BC_CACHE=/content/bc CDSAPI_RC=/root/.cdsapirc python3 -u hc_phaseA.py --mmdd $M --years $Y --jobs $J $*" /content/phaseA_$M${*:+_pert}.log ;;
   setup)  bg "bash hc_gpu_setup.sh" /content/setup.log ;;
