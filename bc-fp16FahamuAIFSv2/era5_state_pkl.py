@@ -34,12 +34,16 @@ import numpy as np
 import xarray as xr
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, "/home/ezra/ea-aifs/s3_grib_pkl")
-sys.path.insert(0, "/home/ezra/ea-aifs/fp16FahamuAIFSv2/run-pre50r1-dates")
+# repo checkout root: the GPU box has it at /home/ezra/ea-aifs; anywhere else (Colab) it is
+# the parent of this folder. BC_CACHE moves /tank/projects/bc-aifs (ARCO cache, MARS waves,
+# reference wave mask).
+REPO_ROOT = os.environ.get("EA_AIFS_ROOT", os.path.dirname(HERE))
+sys.path.insert(0, os.path.join(REPO_ROOT, "s3_grib_pkl"))
+sys.path.insert(0, os.path.join(REPO_ROOT, "fp16FahamuAIFSv2", "run-pre50r1-dates"))
 
 ARCO = ("https://storage.googleapis.com/gcp-public-data-arco-era5/ar/"
         "full_37-1h-0p25deg-chunk-1.zarr-v3")
-CACHE = "/tank/projects/bc-aifs"
+CACHE = os.environ.get("BC_CACHE", "/tank/projects/bc-aifs")
 REF_WAVE_MASK = f"{CACHE}/ref_wave_land_n320.npy"   # True = land in the operational waef
 
 SFC = {"10u": "10m_u_component_of_wind", "10v": "10m_v_component_of_wind",
@@ -57,22 +61,34 @@ LEVELS = [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50, 10]
 
 def arco_fields(times):
     """{name: (2, 542080)} for the 100 atmosphere/land fields at the two times."""
-    import dask
     from s3_grib_pkl_input_aifsens_v2_proto import to_n320, MAX_WORKERS  # noqa: F401
     from concurrent.futures import ThreadPoolExecutor
 
-    ds = xr.open_zarr(ARCO, chunks={"time": 1})
-    tasks = {}
+    # No dask: the store has 1.3 M time chunks per variable, and recent dask materialises
+    # the whole graph at compute (OOM at 52 GB on Colab, 2026-11-12). xarray's lazy
+    # indexing reads only the chunks selected. One read per (variable, time): a
+    # pressure-level chunk holds all 37 levels, so the 14 levels come from one fetch.
+    ds = xr.open_zarr(ARCO, chunks=None)
+
+    def read(job):
+        var, t, lev = job
+        a = ds[var].sel(time=t) if lev is None else ds[var].sel(time=t, level=list(lev))
+        return job, np.asarray(a.values)
+
+    jobs = [(var, t, None) for var in SFC.values() for t in times]
+    jobs += [(var, t, tuple(LEVELS)) for var in PL.values() for t in times]
+    t0 = time.time()
+    with ThreadPoolExecutor(max_workers=16) as ex:
+        got = dict(ex.map(read, jobs))
+    raw = {}
     for nm, var in SFC.items():
-        tasks[nm] = ds[var].sel(time=times)
+        raw[nm] = xr.DataArray(np.stack([got[(var, t, None)] for t in times]))
     for nm, var in PL.items():
-        for lev in LEVELS:
+        for i, lev in enumerate(LEVELS):
             if nm == "q" and lev == 10:          # v2 drops q_10
                 continue
-            tasks[f"{nm}_{lev}"] = ds[var].sel(time=times, level=lev)
-    t0 = time.time()
-    with dask.config.set(scheduler="threads", num_workers=32):
-        raw = dask.compute(tasks)[0]
+            raw[f"{nm}_{lev}"] = xr.DataArray(
+                np.stack([got[(var, t, tuple(LEVELS))][i] for t in times]))
     print(f"  ARCO: {len(raw)} fields x 2 times in {time.time()-t0:.0f}s")
     for nm, a in raw.items():
         if not np.isfinite(a.values).all():

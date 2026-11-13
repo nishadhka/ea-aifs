@@ -22,7 +22,7 @@ import os
 
 import numpy as np
 
-LSM_1P5 = "/tank/projects/bc-aifs/aiwq/land_sea_mask_1pt5DEG.nc"
+LSM_1P5 = os.environ.get("HC_LSM_1P5", "/tank/projects/bc-aifs/aiwq/land_sea_mask_1pt5DEG.nc")
 NDAYS = 33
 WEEKS = {"week3": range(19, 26), "week4": range(26, 33)}
 DOMAIN = (-40, 40, -25, 120)                  # lat0, lat1, lon0, lon1 (deg E, -180..180)
