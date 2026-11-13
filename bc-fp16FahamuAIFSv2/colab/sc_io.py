@@ -31,6 +31,11 @@ def input_key(mmdd, year, member):
     return f"{BASE}/hc-inputs-tmp/{mmdd}/{year}/input_state_member_{member:03d}.pkl"
 
 
+def eda_key(mmdd, year, name):
+    """ERA5 EDA GRIBs from CDS, kept so a rebuild never repeats a CDS request."""
+    return f"{BASE}/hc-inputs-tmp/{mmdd}/eda/{year}/{name}"
+
+
 def product_prefix(mmdd, year, member):
     return f"{BASE}/hc-products/{mmdd}/{year}/m{member:03d}/"
 

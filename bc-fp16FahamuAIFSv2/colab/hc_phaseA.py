@@ -8,9 +8,15 @@ the local copy. A year whose pkl is already on source.coop is skipped, so a rela
 resumes. JOBS years run at once (MARS tape waits then overlap).
 
     hc_phaseA.py --mmdd 1105 --years 2025-2006 [--member 1] [--jobs 4]
+    hc_phaseA.py --mmdd 1105 --years 2025-2006 --perturbed 2-11 [--jobs 2]
 
-Needs: /root/.ecmwfapirc (MARS), /root/.sc.env (source.coop write), BC_CACHE with
-ref_wave_land_n320.npy.
+--perturbed: members 2..11 from the control already on source.coop plus the ERA5 EDA
+(era5_eda_perturb.py): per year, fetch the EDA (CDS, one request at a time across all
+threads via api_polite), download the control, build the missing members, upload each,
+delete local pkls. Years with every member on source.coop are skipped.
+
+Needs: /root/.ecmwfapirc (MARS), /root/.cdsapirc (CDS, --perturbed), /root/.sc.env
+(source.coop write), BC_CACHE with ref_wave_land_n320.npy (control).
 """
 
 import argparse
@@ -25,6 +31,7 @@ sys.path.insert(0, HERE)
 import sc_io  # noqa: E402
 
 BUILDER = os.path.join(os.path.dirname(HERE), "era5_state_pkl.py")
+PERTURB = os.path.join(os.path.dirname(HERE), "era5_eda_perturb.py")
 WORK = os.environ.get("HC_STATES", "/content/states")
 
 
@@ -65,16 +72,82 @@ def one(mmdd, year, member):
     return date, "ok", tb
 
 
+def eda_cache(mmdd, year, direction):
+    """Restore the year's 4 EDA GRIBs from source.coop ('get') or save them ('put')."""
+    sys.path.insert(0, os.path.dirname(HERE))
+    import era5_eda_perturb as E
+    for path in E.eda_paths(year, mmdd).values():
+        key = sc_io.eda_key(mmdd, year, os.path.basename(path))
+        if direction == "get" and not os.path.exists(path) and sc_io.size(key):
+            sc_io.get(key, path)
+        elif direction == "put" and os.path.exists(path) and sc_io.size(key) != os.path.getsize(path):
+            sc_io.put(path, key)
+
+
+def one_perturbed(mmdd, year, members, inflate=1.0):
+    date = f"{year}{mmdd}_0000"
+    todo = [k for k in members if not sc_io.size(sc_io.input_key(mmdd, year, k))]
+    if not todo:
+        print(f"[{date}] members {members[0]}-{members[-1]} on source.coop already, skip", flush=True)
+        return date, "skip", 0.0
+    out = os.path.join(WORK, date)
+    log = os.path.join(WORK, f"perturb_{date}.log")
+    os.makedirs(out, exist_ok=True)
+    t0 = time.time()
+    eda_cache(mmdd, year, "get")             # never ask CDS for what is already stored
+    with open(log, "w") as fh:
+        r = subprocess.run([sys.executable, "-u", PERTURB, "fetch", "--mmdd", mmdd,
+                            "--years", str(year)], stdout=fh, stderr=subprocess.STDOUT)
+        if r.returncode:
+            print(f"[{date}] EDA FETCH FAILED, see {log}", flush=True)
+            return date, "fail", time.time() - t0
+        eda_cache(mmdd, year, "put")
+        tf = time.time() - t0
+        ctl = os.path.join(out, "input_state_member_001.pkl")
+        if not os.path.exists(ctl):
+            sc_io.get(sc_io.input_key(mmdd, year, 1), ctl)
+        spec = ",".join(map(str, todo))
+        r = subprocess.run([sys.executable, "-u", PERTURB, "build", "--mmdd", mmdd,
+                            "--year", str(year), "--control", ctl, "--out", out,
+                            "--members", f"{todo[0]}-{todo[-1]}", "--inflate", str(inflate)],
+                           stdout=fh, stderr=subprocess.STDOUT)
+    tb = time.time() - t0 - tf
+    if r.returncode:
+        print(f"[{date}] PERTURB BUILD FAILED, see {log}", flush=True)
+        return date, "fail", time.time() - t0
+    t1 = time.time()
+    for k in todo:
+        pkl = os.path.join(out, f"input_state_member_{k:03d}.pkl")
+        try:
+            sc_io.put(pkl, sc_io.input_key(mmdd, year, k))
+        except Exception as e:
+            print(f"[{date}] m{k:03d} UPLOAD FAILED: {e}; pkl kept", flush=True)
+            return date, "fail", time.time() - t0
+        os.remove(pkl)
+    os.remove(os.path.join(out, "input_state_member_001.pkl"))
+    print(f"[{date}] members {spec}: EDA {tf:.0f}s, build {tb:.0f}s, "
+          f"upload {time.time()-t1:.0f}s", flush=True)
+    return date, "ok", time.time() - t0
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--mmdd", required=True)
     ap.add_argument("--years", required=True, help="e.g. 2025-2006 or 2025")
     ap.add_argument("--member", type=int, default=1)
     ap.add_argument("--jobs", type=int, default=4)
+    ap.add_argument("--perturbed", default=None, help="e.g. 2-11: EDA-perturbed members")
+    ap.add_argument("--inflate", type=float, default=1.0, help="EDA perturbation scale factor")
     a = ap.parse_args()
     t0 = time.time()
+    if a.perturbed:
+        lo, _, hi = a.perturbed.partition("-")
+        mem = list(range(int(lo), int(hi or lo) + 1))
+        job = lambda y: one_perturbed(a.mmdd, y, mem, a.inflate)
+    else:
+        job = lambda y: one(a.mmdd, y, a.member)
     with ThreadPoolExecutor(a.jobs) as ex:
-        res = list(ex.map(lambda y: one(a.mmdd, y, a.member), years_of(a.years)))
+        res = list(ex.map(job, years_of(a.years)))
     ok = [d for d, s, _ in res if s == "ok"]
     bad = [d for d, s, _ in res if s == "fail"]
     print(f"PHASE A done in {(time.time()-t0)/60:.1f} min: {len(ok)} built, "

@@ -6,7 +6,7 @@
 #   hc_colab.sh push  NAME                    code tarball (+ ~/.ecmwfapirc on CPU runtimes)
 #   hc_colab.sh creds NAME                    source.coop S3 credentials -> /root/.sc.env (600)
 #   hc_colab.sh sh    NAME 'command'          run a command over ssh
-#   hc_colab.sh phaseA NAME MMDD YEARS [JOBS] build pkls -> source.coop (background, log /content/phaseA_MMDD.log)
+#   hc_colab.sh phaseA NAME MMDD YEARS [JOBS] [--perturbed 2-11]  build pkls -> source.coop (background)
 #   hc_colab.sh setup NAME                    GPU env + checkpoint (background, log /content/setup.log)
 #   hc_colab.sh worker NAME MMDD [ARGS...]    GPU worker (background, log /content/worker_MMDD.log)
 #   hc_colab.sh stop  NAME                    stop the runtime; prints sessions and usage
@@ -67,7 +67,8 @@ case $CMD in
   sh)     $SSH "$1" </dev/null ;;
   phaseA)
     $SSH "mkdir -p /content/bc; test -f /content/bc/ref_wave_land_n320.npy || echo 'WARNING: no /content/bc/ref_wave_land_n320.npy (see COLAB_RUNBOOK.md)'" </dev/null
-    bg "env BC_CACHE=/content/bc python3 -u hc_phaseA.py --mmdd $1 --years $2 --jobs ${3:-4}" /content/phaseA_$1.log ;;
+    M=$1 Y=$2 J=${3:-4}; shift 3 2>/dev/null || shift $#
+    bg "env BC_CACHE=/content/bc CDSAPI_RC=/root/.cdsapirc python3 -u hc_phaseA.py --mmdd $M --years $Y --jobs $J $*" /content/phaseA_$M${*:+_pert}.log ;;
   setup)  bg "bash hc_gpu_setup.sh" /content/setup.log ;;
   worker) M=$1; shift; bg "/usr/bin/python3 -u hc_gpu_worker.py --mmdd $M $*" /content/worker_$M.log ;;
   stop)   colab stop -s "$NAME" || true; sleep 2; colab sessions 2>&1 | tail -3; colab usage 2>&1 | grep -E 'rate|balance' ;;
