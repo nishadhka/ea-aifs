@@ -207,7 +207,7 @@ def build(year, mmdd, control_pkl, out_dir, members, inflate=1.0):
     for k in members:
         f = {n: np.array(a, copy=True) for n, a in ctl["fields"].items()}
         for n in names:
-            x = f[n] + inflate * P[n][k - 2]
+            x = f[n] + inflate * P[n][(k - 2) % N_EDA]   # 12-21 reuse EDA 0-9 (A/B tests)
             x[np.isnan(f[n])] = np.nan                     # keep the control's NaN (sea)
             if n.startswith("q_") or n in NONNEG:
                 x = np.where(np.isnan(x), x, np.maximum(x, 0.0))
@@ -215,7 +215,7 @@ def build(year, mmdd, control_pkl, out_dir, members, inflate=1.0):
                 x = np.where(np.isnan(x), x, np.clip(x, 0.0, SWVL_MAX))
             f[n] = x
         state = dict(date=ctl["date"], fields=f,
-                     source=f"{ctl.get('source', 'ERA5')} + ERA5 EDA member {k-2} perturbation"
+                     source=f"{ctl.get('source', 'ERA5')} + ERA5 EDA member {(k-2) % N_EDA} perturbation"
                             + (f" x {inflate:g}" if inflate != 1.0 else ""))
         out = os.path.join(out_dir, f"input_state_member_{k:03d}.pkl")
         with open(out, "wb") as fh:

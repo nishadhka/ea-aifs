@@ -16,6 +16,7 @@ Needs: /content/venv (hc_gpu_setup.sh), /root/.sc.env (source.coop write).
 import argparse
 import json
 import os
+import random
 import re
 import shutil
 import socket
@@ -74,21 +75,28 @@ def todo(mmdd, years, members):
     return sorted(items, key=lambda t: (-t[0], t[1]))
 
 
+def _read_claim(prefix):
+    """CLAIM body via the S3 API (not the public URL, which may be cached), or None."""
+    try:
+        body = sc_io._anon().get_object(Bucket=sc_io.BUCKET, Key=prefix + "CLAIM")["Body"].read()
+        return json.loads(body)
+    except Exception:
+        return None
+
+
 def claim(prefix, ttl):
+    """Write a CLAIM, wait, read it back: only the runtime whose claim survived proceeds.
+    (Without the read-back two workers that looked at the same moment both ran the member,
+    2026-11-13.)"""
     if sc_io.size(prefix + "DONE"):
         return False
-    c = sc_io.size(prefix + "CLAIM")
-    if c:
-        try:
-            import urllib.request
-            info = json.loads(urllib.request.urlopen(
-                f"{sc_io.ENDPOINT}/{sc_io.BUCKET}/{prefix}CLAIM", timeout=30).read())
-            if info["host"] != HOST and time.time() - info["t"] < ttl:
-                return False
-        except Exception:
-            return False
+    info = _read_claim(prefix)
+    if info and info["host"] != HOST and time.time() - info["t"] < ttl:
+        return False
     sc_io.put_bytes(json.dumps({"host": HOST, "t": time.time()}).encode(), prefix + "CLAIM")
-    return True
+    time.sleep(8 + random.random() * 4)
+    info = _read_claim(prefix)
+    return bool(info) and info["host"] == HOST
 
 
 class GpuPeak(threading.Thread):
@@ -178,6 +186,7 @@ if __name__ == "__main__":
     ap.add_argument("--claim-ttl", type=float, default=3 * 3600)
     a = ap.parse_args()
     years, members = rng(a.years), rng(a.members)
+    time.sleep(random.random() * 30)          # stagger workers started together
     done, failed, t0 = [], set(), time.time()
     while True:
         picked = None
