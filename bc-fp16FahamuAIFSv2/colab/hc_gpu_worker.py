@@ -184,10 +184,14 @@ if __name__ == "__main__":
     ap.add_argument("--members", default=None, help="e.g. 1 or 1-11")
     ap.add_argument("--max", type=int, default=0, help="stop after this many members (0 = all)")
     ap.add_argument("--claim-ttl", type=float, default=3 * 3600)
+    ap.add_argument("--wait", type=float, default=0,
+                    help="when nothing is claimable, poll every 2 min for new pkls for up to "
+                         "this many seconds (pkls still being built), then exit")
     a = ap.parse_args()
     years, members = rng(a.years), rng(a.members)
     time.sleep(random.random() * 30)          # stagger workers started together
     done, failed, t0 = [], set(), time.time()
+    idle_since = None
     while True:
         picked = None
         for y, n, key in todo(a.mmdd, years, members):
@@ -197,7 +201,12 @@ if __name__ == "__main__":
                 picked = (y, n, key)
                 break
         if not picked:
+            idle_since = idle_since or time.time()
+            if a.wait and time.time() - idle_since < a.wait:
+                time.sleep(120)
+                continue
             break
+        idle_since = None
         t = run_one(a.mmdd, *picked)
         if t:
             done.append(t)

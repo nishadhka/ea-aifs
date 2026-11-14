@@ -9,6 +9,7 @@ resumes. JOBS years run at once (MARS tape waits then overlap).
 
     hc_phaseA.py --mmdd 1105 --years 2025-2006 [--member 1] [--jobs 4]
     hc_phaseA.py --mmdd 1105 --years 2025-2006 --perturbed 2-11 [--jobs 2]
+    hc_phaseA.py --realtime 20261112 [--rt-members 1-51] [--jobs 4]   -> 1112/2026/m001..051
 
 --perturbed: members 2..11 from the control already on source.coop plus the ERA5 EDA
 (era5_eda_perturb.py): per year, fetch the EDA (CDS, one request at a time across all
@@ -51,9 +52,14 @@ def one(mmdd, year, member):
     log = os.path.join(WORK, f"build_{date}.log")
     os.makedirs(out, exist_ok=True)
     t0 = time.time()
-    with open(log, "w") as fh:
-        r = subprocess.run([sys.executable, "-u", BUILDER, "--date", date, "--out", out,
-                            "--member", str(member)], stdout=fh, stderr=subprocess.STDOUT)
+    for attempt in range(3):      # earthkit's sqlite cache can be locked by parallel builds
+        with open(log, "w") as fh:
+            r = subprocess.run([sys.executable, "-u", BUILDER, "--date", date, "--out", out,
+                                "--member", str(member)], stdout=fh, stderr=subprocess.STDOUT)
+        if r.returncode == 0:
+            break
+        print(f"[{date}] build attempt {attempt+1} failed, retrying", flush=True)
+        time.sleep(30 * (attempt + 1))
     tb = time.time() - t0
     pkl = os.path.join(out, f"input_state_member_{member:03d}.pkl")
     if r.returncode or not os.path.exists(pkl):
@@ -70,6 +76,40 @@ def one(mmdd, year, member):
     os.remove(pkl)
     print(f"[{date}] built {tb:.0f}s, uploaded {mb:.0f} MB in {tu:.0f}s -> {key}", flush=True)
     return date, "ok", tb
+
+
+PROTO = os.path.join(os.path.dirname(os.path.dirname(HERE)), "s3_grib_pkl",
+                     "s3_grib_pkl_input_aifsens_v2_proto.py")
+
+
+def one_realtime(date, member, control_member=51):
+    """Real-time IFS open-data member (pf 1..50; 51 = unperturbed control from HRES 0 h,
+    as the real-time chain) -> hc-inputs-tmp/<MMDD>/<YYYY>/ like a hindcast member, so the
+    GPU worker runs it unchanged. Open data is anonymous GCS: no MARS/CDS."""
+    year, mmdd = int(date[:4]), date[4:8]
+    key = sc_io.input_key(mmdd, year, member)
+    if sc_io.size(key):
+        return member, "skip"
+    out = os.path.join(WORK, f"rt_{date}_m{member:03d}")
+    os.makedirs(out, exist_ok=True)
+    cmd = [sys.executable, "-u", PROTO, "--date", f"{date}_0000", "--member", str(member),
+           "--source", "gcs", "--out", out]
+    if member == control_member:
+        cmd += ["--control-member", str(control_member)]
+    with open(os.path.join(WORK, f"rt_{date}_m{member:03d}.log"), "w") as fh:
+        r = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT)
+    pkl = os.path.join(out, f"proto_input_state_member_{member:03d}.pkl")
+    if r.returncode or not os.path.exists(pkl):
+        print(f"[{date} m{member:03d}] REALTIME BUILD FAILED", flush=True)
+        return member, "fail"
+    try:
+        sc_io.put(pkl, key)
+    except Exception as e:
+        print(f"[{date} m{member:03d}] UPLOAD FAILED: {e}", flush=True)
+        return member, "fail"
+    os.remove(pkl)
+    print(f"[{date} m{member:03d}] real-time pkl -> {key}", flush=True)
+    return member, "ok"
 
 
 def eda_cache(mmdd, year, direction):
@@ -90,6 +130,9 @@ def one_perturbed(mmdd, year, members, inflate=1.0):
     if not todo:
         print(f"[{date}] members {members[0]}-{members[-1]} on source.coop already, skip", flush=True)
         return date, "skip", 0.0
+    if not sc_io.size(sc_io.input_key(mmdd, year, 1)):
+        print(f"[{date}] no control pkl on source.coop yet: skipped, rerun later", flush=True)
+        return date, "fail", 0.0
     out = os.path.join(WORK, date)
     log = os.path.join(WORK, f"perturb_{date}.log")
     os.makedirs(out, exist_ok=True)
@@ -132,14 +175,26 @@ def one_perturbed(mmdd, year, members, inflate=1.0):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mmdd", required=True)
-    ap.add_argument("--years", required=True, help="e.g. 2025-2006 or 2025")
+    ap.add_argument("--mmdd", default=None)
+    ap.add_argument("--years", default=None, help="e.g. 2025-2006 or 2025")
+    ap.add_argument("--realtime", default=None,
+                    help="YYYYMMDD: build the 51 real-time IFS open-data members instead")
+    ap.add_argument("--rt-members", default="1-51")
     ap.add_argument("--member", type=int, default=1)
     ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--perturbed", default=None, help="e.g. 2-11: EDA-perturbed members")
     ap.add_argument("--inflate", type=float, default=1.0, help="EDA perturbation scale factor")
     a = ap.parse_args()
     t0 = time.time()
+    if a.realtime:
+        lo, _, hi = a.rt_members.partition("-")
+        mem = list(range(int(lo), int(hi or lo) + 1))
+        with ThreadPoolExecutor(a.jobs) as ex:
+            res = list(ex.map(lambda m: one_realtime(a.realtime, m), mem))
+        bad = [m for m, st in res if st == "fail"]
+        print(f"REALTIME {a.realtime} done in {(time.time()-t0)/60:.1f} min: "
+              f"{sum(st == 'ok' for _, st in res)} built, failed {bad or 'none'}")
+        sys.exit(1 if bad else 0)
     if a.perturbed:
         lo, _, hi = a.perturbed.partition("-")
         mem = list(range(int(lo), int(hi or lo) + 1))

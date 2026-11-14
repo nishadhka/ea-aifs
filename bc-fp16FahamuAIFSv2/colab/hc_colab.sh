@@ -7,6 +7,7 @@
 #   hc_colab.sh creds NAME                    source.coop S3 credentials -> /root/.sc.env (600)
 #   hc_colab.sh sh    NAME 'command'          run a command over ssh
 #   hc_colab.sh phaseA NAME MMDD YEARS [JOBS] [--perturbed 2-11]  build pkls -> source.coop (background)
+#   hc_colab.sh realtime NAME YYYYMMDD [JOBS] 51 real-time IFS open-data pkls -> <MMDD>/<YYYY>/ (background)
 #   hc_colab.sh setup NAME                    GPU env + checkpoint (background, log /content/setup.log)
 #   hc_colab.sh worker NAME MMDD [ARGS...]    GPU worker (background, log /content/worker_MMDD.log)
 #   hc_colab.sh stop  NAME                    stop the runtime; prints sessions and usage
@@ -81,6 +82,7 @@ case $CMD in
     $SSH "mkdir -p /content/bc; test -f /content/bc/ref_wave_land_n320.npy || echo 'WARNING: no /content/bc/ref_wave_land_n320.npy (control builds only; see RUNBOOK_20261105.md section 4.1)'" </dev/null
     M=$1 Y=$2 J=${3:-4}; shift 3 2>/dev/null || shift $#
     bg "env BC_CACHE=/content/bc CDSAPI_RC=/root/.cdsapirc python3 -u hc_phaseA.py --mmdd $M --years $Y --jobs $J $*" /content/phaseA_$M${*:+_pert}.log ;;
+  realtime) bg "env BC_CACHE=/content/bc python3 -u hc_phaseA.py --realtime $1 --jobs ${2:-4}" /content/realtime_$1.log ;;
   setup)  bg "bash hc_gpu_setup.sh" /content/setup.log ;;
   worker) M=$1; shift; bg "/usr/bin/python3 -u hc_gpu_worker.py --mmdd $M $*" /content/worker_$M.log ;;
   stop)   colab stop -s "$NAME" || true; sleep 2; colab sessions 2>&1 | tail -3; colab usage 2>&1 | grep -E 'rate|balance' ;;
