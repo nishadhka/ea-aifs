@@ -41,6 +41,12 @@ CFG
 # setsid -f: fully detached, so ssh returns at once (with plain nohup & the channel stayed open)
 bg() { ssh -n -F "$CFG" "$NAME" "cd $BC/colab && setsid -f nohup $1 > $2 2>&1 < /dev/null; echo started: $2"; }
 
+# `colab ssh` CREATES a runtime if NAME is gone (Colab ends idle or long-lived runtimes):
+# refuse to connect unless the session exists (a status check on 2026-11-14 started one).
+if [ "$CMD" != up ] && [ "$CMD" != stop ]; then
+  colab sessions 2>/dev/null | grep -q "\[$NAME\]" || { echo "no Colab session '$NAME' (ended?); run: hc_colab.sh up $NAME ..."; exit 3; }
+fi
+
 case $CMD in
   up)
     ACC=${1:-cpu}
@@ -58,6 +64,12 @@ case $CMD in
     rm -f "$T"
     RC=$HERE/../.ecmwfapirc; [ -f "$RC" ] || RC=$HOME/.ecmwfapirc
     if [ -f "$RC" ]; then $SSH 'umask 077; cat > /root/.ecmwfapirc' < "$RC"; echo "MARS key pushed"; fi
+    # MJO and indices inputs (vpm_clim_1991_2020.npz, rmm_basis.npz, land_sea_mask_1pt5DEG.nc),
+    # from the GPU box (aifs_20261105_bundle.zip inputs_for_colab/) -> /content/aux/
+    if ls "$HERE"/../colab_aux/*.n* >/dev/null 2>&1; then
+      $SSH 'mkdir -p /content/aux' </dev/null
+      scp -q -F "$CFG" "$HERE"/../colab_aux/* "$NAME":/content/aux/ && echo "aux pushed: $(ls "$HERE"/../colab_aux | tr '\n' ' ')"
+    else echo "WARNING: no colab_aux/: MJO and indices will be skipped"; fi
     RC=$HERE/../.cdsapirc; [ -f "$RC" ] || RC=$HOME/.cdsapirc
     if [ -f "$RC" ]; then $SSH 'umask 077; cat > /root/.cdsapirc' < "$RC"; echo "CDS key pushed"; fi ;;
   creds)
