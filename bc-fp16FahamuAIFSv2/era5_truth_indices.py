@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.join(os.environ.get("EA_AIFS_ROOT", os.path.dirname(o
 import hc_extract as X  # noqa: E402
 from api_polite import polite  # noqa: E402
 
-CACHE = "/tank/projects/bc-aifs"
+CACHE = os.environ.get("BC_CACHE", "/tank/projects/bc-aifs")
 AREA = (40, -25, -40, 120)                    # N, W, S, E (CDS order)
 GRID = 1.0
 NLAT, NLON = 81, 146

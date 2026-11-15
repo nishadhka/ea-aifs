@@ -27,7 +27,7 @@ import xarray as xr
 
 ARCO = ("https://storage.googleapis.com/gcp-public-data-arco-era5/ar/"
         "full_37-1h-0p25deg-chunk-1.zarr-v3")
-CACHE = "/tank/projects/bc-aifs/era5_weekly"
+CACHE = os.path.join(os.environ.get("BC_CACHE", "/tank/projects/bc-aifs"), "era5_weekly")
 ARCO_VAR = {"tas": "2m_temperature", "mslp": "mean_sea_level_pressure",
             "pr": "total_precipitation"}
 DEFAULT = dict(tas_mslp="6-hourly mean Mon00..Sun18", pr="hourly sum Mon01..Mon00",
@@ -38,23 +38,30 @@ LON15 = np.arange(240) * 1.5
 
 
 def _open():
-    return xr.open_zarr(ARCO, chunks={"time": 1})
+    # chunks=None: no dask. Recent dask materialises the store's 1.3 M-chunk graph at
+    # compute and was OOM-killed on Colab (2026-11-12); lazy indexing reads only the chunks
+    # selected, the same bytes.
+    return xr.open_zarr(ARCO, chunks=None)
 
 
 def weekly(monday):
     """dict var -> (121, 240) DataArray, AI-WQ definitions (module docstring)."""
-    import dask
+    from concurrent.futures import ThreadPoolExecutor
     t0 = dt.datetime.strptime(monday, "%Y%m%d")
     ds = _open()
-    pick = lambda v, hours: ds[ARCO_VAR[v]].sel(
-        time=[t0 + dt.timedelta(hours=h) for h in hours])[:, ::6, ::6]
-    tasks = dict(tas=pick("tas", range(0, 168, 6)), mslp=pick("mslp", range(0, 168, 6)),
-                 pr=pick("pr", range(1, 169)))
-    with dask.config.set(scheduler="threads", num_workers=24):
-        out = dask.compute(tasks)[0]
+    hours = dict(tas=range(0, 168, 6), mslp=range(0, 168, 6), pr=range(1, 169))
+    jobs = [(v, h) for v in hours for h in hours[v]]
+
+    def read(job):
+        v, h = job
+        a = ds[ARCO_VAR[v]].sel(time=t0 + dt.timedelta(hours=h))[::6, ::6]
+        return job, np.asarray(a.values, np.float64)
+
+    with ThreadPoolExecutor(max_workers=16) as ex:
+        got = dict(ex.map(read, jobs))
     res = {}
-    for v, a in out.items():
-        x = np.asarray(a.values, np.float64)
+    for v in hours:
+        x = np.stack([got[(v, h)] for h in hours[v]])
         if not np.isfinite(x).all(axis=(1, 2)).all():
             raise RuntimeError(f"{monday} {v}: missing hours in ARCO (ERA5T not out yet?)")
         res[v] = xr.DataArray(x.sum(0) * 1000 if v == "pr" else x.mean(0),
