@@ -33,14 +33,16 @@ import xarray as xr
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-sys.path.insert(0, "/home/ezra/ea-aifs/fp16FahamuAIFSv2/ts-mjo")
+sys.path.insert(0, os.path.join(os.environ.get("EA_AIFS_ROOT", os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                                "fp16FahamuAIFSv2", "ts-mjo"))
 from ts_days import tercile_probs  # noqa: E402
 from mjo_index import phase_from_pcs  # noqa: E402
 
-S = "/tank/projects/bc-aifs"
-RUN = "/tank/projects/aifs-run"
-IBTRACS = "/tank/projects/ibtracs/IBTrACS.ALL.v04r01.nc"
-MJO_OBS = "/tank/projects/era5_vpm_clim/aiwq/MJO_DAILY_{y}.nc"
+S = os.environ.get("BC_CACHE", "/tank/projects/bc-aifs")
+RUN = os.environ.get("BC_RUN", "/tank/projects/aifs-run")
+IBTRACS = os.environ.get("HC_IBTRACS", "/tank/projects/ibtracs/IBTrACS.ALL.v04r01.nc")
+MJO_OBS = os.path.join(os.environ.get("HC_MJO_OBS_DIR", "/tank/projects/era5_vpm_clim/aiwq"),
+                       "MJO_DAILY_{y}.nc")
 BASINS = ["ATL", "NWP", "SWIO", "SEIO"]
 WEEKS = {"week3": slice(18, 25), "week4": slice(25, 32)}     # lead days 19-25, 26-32
 MJO_BINS = [(1, 7), (8, 14), (15, 18), (19, 25), (26, 33)]   # lead-day bins for the map
@@ -94,15 +96,44 @@ def idx_truth(init):
 
 
 # ------------------------------------------------------------------ model
-def model(init, base=None):
+class Members:
+    """indices.npz of k members of one year: ['daily_x'] -> member mean, .mem('daily_x')
+    -> (k, ...), constant grids (dom_lat/lon/land) from the first member."""
+    def __init__(self, files):
+        self.z = [np.load(f) for f in files]
+        self.files = self.z[0].files
+
+    def mem(self, key):
+        return np.stack([np.asarray(z[key], float) for z in self.z])
+
+    def __getitem__(self, key):
+        if key.startswith("dom_"):
+            return self.z[0][key]
+        return np.nanmean(self.mem(key), 0)
+
+
+def member_dirs(init, base=None):
+    """Colab bundle: hc15/<init>/m<NNN>/ (11 members); GPU box: hc_nc/<init>_0000/ (1)."""
+    d = f"{S}/hc15/{init}"
+    if base is None and os.path.isdir(d):
+        return sorted(os.path.join(d, m) for m in os.listdir(d)
+                      if os.path.exists(os.path.join(d, m, "indices.npz")))
     d = base or f"{S}/hc_nc/{init}_0000"
-    if not os.path.exists(f"{d}/DONE"):
+    return [d] if os.path.exists(f"{d}/DONE") else []
+
+
+def model(init, base=None):
+    """ts (k,2,4) storm days, mjo (k,34,2) VPM PCs, idx Members -- k members of one year."""
+    ds_ = member_dirs(init, base)
+    if not ds_:
         return None
-    ts = xr.open_dataset(f"{d}/ts_days.nc")["storm_days"].sel(basin=BASINS).values[0]   # (2,4)
-    mj = xr.open_dataset(f"{d}/mjo_probs.nc")
-    mjo = np.stack([mj.vpm1.values[0], mj.vpm2.values[0]], 1)                          # (34,2)
-    ix = np.load(f"{d}/indices.npz")
-    return dict(ts=ts, mjo=mjo, idx=ix)
+    ts = np.stack([xr.open_dataset(f"{d}/ts_days.nc")["storm_days"].sel(basin=BASINS).values[0]
+                   for d in ds_])
+    mjo = []
+    for d in ds_:
+        mj = xr.open_dataset(f"{d}/mjo_probs.nc")
+        mjo.append(np.stack([mj.vpm1.values[0], mj.vpm2.values[0]], 1))
+    return dict(ts=ts, mjo=np.stack(mjo), idx=Members([f"{d}/indices.npz" for d in ds_]))
 
 
 def collect(md, y0, y1):
@@ -110,9 +141,11 @@ def collect(md, y0, y1):
     for y in range(y0, y1 + 1):
         i = init_of(y, md)
         m, t = model(i), idx_truth(i)
-        if m is None or t is None:
-            print(f"  {y}: {'no model' if m is None else 'no index truth'}, left out")
+        if m is None:
+            print(f"  {y}: no model, left out")
             continue
+        if t is None:      # TS and MJO do not need it; indices and maps are skipped
+            print(f"  {y}: no index truth (TS/MJO only)")
         yrs.append(y)
         M[y] = m
         T[y] = dict(ts=ts_truth(i), mjo=mjo_truth(i), idx=t)
@@ -166,7 +199,7 @@ def evaluate(md, y0, y1):
     n = len(yrs)
     print(f"hindcast {md}: {n} years with model and truth: {yrs[0]}-{yrs[-1]}")
     R = dict(years=yrs, ts={}, mjo={}, idx={}, maps={})
-    lines = [f"# 15-variable hindcast evaluation, {md}, {yrs[0]}-{yrs[-1]} ({n} years, 1 member/yr)", ""]
+    lines = [f"# 15-variable hindcast evaluation, {md}, {yrs[0]}-{yrs[-1]} ({n} years, {M[yrs[0]]['ts'].shape[0]} members/yr)", ""]
 
     # ---- TS days
     lines += ["## Tropical-storm days (IBTrACS truth, global)", "",
@@ -174,7 +207,8 @@ def evaluate(md, y0, y1):
               "|---|---|---|---|---|---|"]
     for wi, wk in enumerate(("week3", "week4")):
         for bi, b in enumerate(BASINS):
-            m = np.array([M[y]["ts"][wi, bi] for y in yrs], float)
+            mm = [np.asarray(M[y]["ts"][:, wi, bi], float) for y in yrs]   # members per year
+            m = np.array([x.mean() for x in mm])
             o = np.array([T[y]["ts"][wi, bi] for y in yrs], float)
             hr = hm = rr = rm = 0.0; ns = 0
             for j in range(n):
@@ -183,9 +217,9 @@ def evaluate(md, y0, y1):
                 if lo == hi:
                     continue                                 # AI-WQ: not scoreable
                 oc = int(cat(o[j], lo, hi))
-                p_raw, _ = tercile_probs([m[j]], lo, hi)
-                mlo, mhi = terciles(m[tr])
-                p_mc, _ = tercile_probs([m[j]], mlo, mhi) if mlo != mhi else (p_raw, None)
+                p_raw, _ = tercile_probs(mm[j], lo, hi)
+                mlo, mhi = terciles(np.concatenate([mm[t] for t in np.where(tr)[0]]))
+                p_mc, _ = tercile_probs(mm[j], mlo, mhi) if mlo != mhi else (p_raw, None)
                 hr += p_raw[oc]; hm += p_mc[oc]; rr += rps3(p_raw, oc); rm += rps3(p_mc, oc); ns += 1
             key = f"{b}_{wk}"
             R["ts"][key] = dict(obs_mean=o.mean(), model_mean=m.mean(), n_scoreable=ns,
@@ -199,28 +233,38 @@ def evaluate(md, y0, y1):
     lines += ["", "## MJO (AI-WQ RMM truth, global)", "",
               "| lead days | obs amplitude | model amplitude | raw: category hit / RMM error | mapped: category hit / RMM error |",
               "|---|---|---|---|---|"]
-    Xm = np.stack([M[y]["mjo"] for y in yrs])       # (n,34,2)
-    Yo = np.stack([T[y]["mjo"] for y in yrs])
+    Xm = np.stack([M[y]["mjo"] for y in yrs])       # (n, k, 34, 2): every member
+    Yo = np.stack([T[y]["mjo"] for y in yrs])       # (n, 34, 2)
+    k = Xm.shape[1]
+    Yk = np.repeat(Yo[:, None], k, 1)               # each member paired with its year's truth
     for (a, b) in MJO_BINS:
         hr = hm = er = em = 0.0; cnt = 0
         for j in range(n):
             tr = np.arange(n) != j
-            coef = mjo_fit(Xm[tr, a:b + 1].reshape(-1, 2), Yo[tr, a:b + 1].reshape(-1, 2))
-            x, y_ = Xm[j, a:b + 1], Yo[j, a:b + 1]
-            xm = np.c_[x, np.ones(len(x))].dot(coef)
-            po, _ = phase_from_pcs(y_[:, 0], y_[:, 1])
-            pr_, _ = phase_from_pcs(x[:, 0], x[:, 1])
-            pm, _ = phase_from_pcs(xm[:, 0], xm[:, 1])
-            hr += (pr_ == po).sum(); hm += (pm == po).sum()
-            er += np.sum((x - y_) ** 2); em += np.sum((xm - y_) ** 2); cnt += len(x)
+            coef = mjo_fit(Xm[tr, :, a:b + 1].reshape(-1, 2), Yk[tr, :, a:b + 1].reshape(-1, 2))
+            for mi in range(k):
+                x, y_ = Xm[j, mi, a:b + 1], Yo[j, a:b + 1]
+                xm = np.c_[x, np.ones(len(x))].dot(coef)
+                po, _ = phase_from_pcs(y_[:, 0], y_[:, 1])
+                pr_, _ = phase_from_pcs(x[:, 0], x[:, 1])
+                pm, _ = phase_from_pcs(xm[:, 0], xm[:, 1])
+                hr += (pr_ == po).sum(); hm += (pm == po).sum()
+                er += np.sum((x - y_) ** 2); em += np.sum((xm - y_) ** 2); cnt += len(x)
         amp_o = np.hypot(*Yo[:, a:b + 1].reshape(-1, 2).T).mean()
-        amp_m = np.hypot(*Xm[:, a:b + 1].reshape(-1, 2).T).mean()
+        amp_m = np.hypot(*Xm[:, :, a:b + 1].reshape(-1, 2).T).mean()
         R["mjo"][f"{a}-{b}"] = dict(amp_obs=amp_o, amp_model=amp_m, hit_raw=hr / cnt, hit_map=hm / cnt,
                                     err_raw=np.sqrt(er / cnt), err_map=np.sqrt(em / cnt))
         r = R["mjo"][f"{a}-{b}"]
         lines.append(f"| {a}-{b} | {amp_o:.2f} | {amp_m:.2f} | {r['hit_raw']:.2f} / {r['err_raw']:.2f} | "
                      f"{r['hit_map']:.2f} / {r['err_map']:.2f} |")
 
+    if any(T[y]["idx"] is None for y in yrs):
+        lines += ["", "Indices and weekly maps: skipped (no index truth for every year)."]
+        js = json.loads(json.dumps(R, default=float))
+        json.dump(js, open(f"{S}/hc15_eval_{md}.json", "w"), indent=1)
+        open(f"{S}/hc15_eval_{md}.md", "w").write("\n".join(lines) + "\n")
+        print("\n".join(lines))
+        return
     # ---- indices (weekly means of the daily series)
     names = sorted(k[6:] for k in M[yrs[0]]["idx"].files if k.startswith("daily_"))
     lines += ["", "## Indices, weekly means (ERA5 truth, same definitions)", "",
@@ -239,7 +283,9 @@ def evaluate(md, y0, y1):
                 er += (m[j] - o[j]) ** 2; ec += (m[j] - b - o[j]) ** 2
                 lo, hi = terciles(o[tr]); oc = cat(o[j], lo, hi)
                 hr += cat(m[j], lo, hi) == oc
-                mlo, mhi = terciles(m[tr]); hm += cat(m[j], mlo, mhi) == oc
+                pool = np.concatenate([np.nanmean(M[yrs[t]]["idx"].mem(f"daily_{nm}")[:, sl], 1)
+                                       for t in np.where(tr)[0]])
+                mlo, mhi = terciles(pool); hm += cat(m[j], mlo, mhi) == oc
             R["idx"][f"{nm}_{wk}"] = dict(bias=d.mean(), t=t, rmse_raw=np.sqrt(er / n), rmse_corr=np.sqrt(ec / n),
                                           hit_raw=hr / n, hit_mc=hm / n, obs_sd=o.std(ddof=1))
             r = R["idx"][f"{nm}_{wk}"]
@@ -288,6 +334,15 @@ def evaluate(md, y0, y1):
 
 
 # ------------------------------------------------------------------ apply
+def rt_members(date):
+    """Colab real-time members: rt15/<date>/m<NNN>/ in the bundle, else [] (GPU box layout)."""
+    d = f"{S}/rt15/{date}"
+    if not os.path.isdir(d):
+        return []
+    return sorted(os.path.join(d, m) for m in os.listdir(d)
+                  if os.path.exists(os.path.join(d, m, "ts_days.nc")))
+
+
 def apply(date):
     md = date[4:8]
     ev = json.load(open(f"{S}/hc15_eval_{md}.json"))
@@ -300,17 +355,20 @@ def apply(date):
     n = len(yrs)
 
     # ---- TS: model-climate tercile edges from the 20 hindcast years
-    raw = xr.open_dataset(f"{rt}/ts_days.nc")
-    cnt = raw["storm_days"].sel(basin=BASINS).values                      # (51,2,4)
+    rtm = rt_members(date)
+    raw = xr.open_dataset(f"{rtm[0]}/ts_days.nc") if rtm else xr.open_dataset(f"{rt}/ts_days.nc")
+    cnt = (np.stack([xr.open_dataset(f"{d}/ts_days.nc")["storm_days"].sel(basin=BASINS).values[0]
+                     for d in rtm]) if rtm
+           else raw["storm_days"].sel(basin=BASINS).values)              # (51,2,4)
     probs = np.zeros((2, 4, 3)); bounds = np.zeros((2, 4, 2)); degen = []
     for wi in range(2):
         for bi, b in enumerate(BASINS):
-            mlo, mhi = terciles([M[y]["ts"][wi, bi] for y in yrs])
+            mlo, mhi = terciles(np.concatenate([M[y]["ts"][:, wi, bi] for y in yrs]))
             p, dg = tercile_probs(cnt[:, wi, bi], mlo, mhi)
             if dg:
                 degen.append(f"{b} week{wi+3}")
             probs[wi, bi], bounds[wi, bi] = p, (mlo, mhi)
-    ds = raw.copy()
+    ds = raw.isel(member=[0]).copy() if "member" in raw.dims else raw.copy()
     ds["TS_tercile_probability"] = (("week", "basin", "category"), probs)
     ds["tercile_bounds"] = (("week", "basin", "bound"), bounds)
     ds.attrs.update(tercile_source=f"MODEL climate: {n}-year same-date hindcast {md} "
@@ -321,13 +379,23 @@ def apply(date):
 
     # ---- MJO: per lead-bin map fitted on all hindcast years
     Xm = np.stack([M[y]["mjo"] for y in yrs]); Yo = np.stack([T[y]["mjo"] for y in yrs])
-    coefs = {(a, b): mjo_fit(Xm[:, a:b + 1].reshape(-1, 2), Yo[:, a:b + 1].reshape(-1, 2)) for a, b in MJO_BINS}
-    mr = xr.open_dataset(f"{rt}/mjo_probs.nc")
-    X = np.stack([mr.vpm1.values, mr.vpm2.values], -1)                     # (51,34,2)
+    Yk = np.repeat(Yo[:, None], Xm.shape[1], 1)
+    coefs = {(a, b): mjo_fit(Xm[:, :, a:b + 1].reshape(-1, 2), Yk[:, :, a:b + 1].reshape(-1, 2))
+             for a, b in MJO_BINS}
+    if rtm:
+        mjs = [xr.open_dataset(f"{d}/mjo_probs.nc") for d in rtm]
+        mr = xr.concat(mjs, "member") if "member" in mjs[0].dims else mjs[0]
+        X = np.stack([np.concatenate([m.vpm1.values for m in mjs]),
+                      np.concatenate([m.vpm2.values for m in mjs])], -1)  # (51,34,2)
+    else:
+        mr = xr.open_dataset(f"{rt}/mjo_probs.nc")
+        X = np.stack([mr.vpm1.values, mr.vpm2.values], -1)                 # (51,34,2)
     Xc = mjo_apply(coefs, X)
     ph, amp = phase_from_pcs(Xc[..., 0], Xc[..., 1])
     pp = np.stack([(ph == k).mean(0) for k in range(9)], 1)                # (34,9)
     md_ = mr.copy()
+    for v in [v for v in md_.data_vars if "member" in md_[v].dims and md_[v].sizes["member"] != X.shape[0]]:
+        md_ = md_.drop_vars(v)
     md_["MJO_phase_probability"] = (("day", "MJO_phase"), pp)
     md_["vpm1"] = (("member", "day"), Xc[..., 0]); md_["vpm2"] = (("member", "day"), Xc[..., 1])
     md_["amplitude"] = (("member", "day"), amp); md_["phase"] = (("member", "day"), ph)
@@ -337,8 +405,16 @@ def apply(date):
     md_.to_netcdf(f_mjo)
 
     # ---- indices: corrected weekly ensemble means and model-climate tercile probabilities
-    mem = sorted(f for f in os.listdir(rt) if f.startswith("indices_m"))
-    E = [np.load(f"{rt}/{f}") for f in mem]
+    if not ev["idx"]:
+        for f in (f_ts, f_mjo):
+            print(f"wrote {f}")
+        print("indices: skipped (no index truth)")
+        return
+    if rtm:
+        E = [np.load(f"{d}/indices.npz") for d in rtm]
+    else:
+        mem = sorted(f for f in os.listdir(rt) if f.startswith("indices_m"))
+        E = [np.load(f"{rt}/{f}") for f in mem]
     names = sorted(k[6:] for k in E[0].files if k.startswith("daily_"))
     rows = []
     vals = np.zeros((len(names), 2, 3)); pr3 = np.zeros((len(names), 2, 3)); obs_t = np.zeros((len(names), 2, 2))
@@ -350,7 +426,8 @@ def apply(date):
             b = (m - o).mean()
             r = ev["idx"][f"{nm}_{wk}"]
             use = r["rmse_corr"] < r["rmse_raw"]
-            mlo, mhi = terciles(m)
+            mlo, mhi = terciles(np.concatenate([np.nanmean(M[y]["idx"].mem(f"daily_{nm}")[:, sl], 1)
+                                                for y in yrs]))
             p, _ = tercile_probs(x, mlo, mhi)
             vals[ii, wi] = (x.mean(), x.mean() - (b if use else 0.0), b)
             pr3[ii, wi] = p
