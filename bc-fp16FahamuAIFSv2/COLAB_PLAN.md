@@ -321,3 +321,70 @@ $B/hc_colab.sh stop hcB
 
 Always end with `stop` and check `colab usage` shows 0.00/hr: five CPU sessions left
 running from 5 to 11 Nov cost ~130 CU.
+
+## 10. Measured cost of a full cycle, and the cost model (12 Nov 2026)
+
+From the 12 Nov cycle (`RUNBOOK_20261112.md`): 220 hindcast + 51 real-time members on Colab,
+starting states on source.coop, corrected entry submitted as `bcfp16FahamuAIFSv2`. Compute units
+(CU) at ~$0.10 each (100 for $9.99). Balance 454.31 → 325.95 = **128.4 CU ≈ $12.8**.
+
+### 10.1 Where the compute units went
+
+| Item | Hours | CU | ≈ $ |
+|---|---|---|---|
+| 3 × L4 billed (2026-11-14 15:44 → 11-15 12:30 UTC, 20.8 h each) | 62.5 GPU-h | 121.2 | 12.1 |
+| ↳ running members: 271 × 8.8 min (incl. pkl download and product upload) | 39.8 | 77.2 | 7.7 |
+| ↳ idle after the last member: two L4s ~4.6 h each, the third ~0.8 h | 10.0 | 19.4 | 1.9 |
+| ↳ idle during the run: waiting for hindcast pkls (MARS tape) and, on one L4, ~3.2 h for 2 stale member claims to expire (3 h claim TTL) | 12.7 | 24.6 | 2.5 |
+| CPU runtime 1: pkls, EDA, truth (ended by Colab at ~24 h) | ~24 | 6.3 | 0.6 |
+| CPU runtime 2: truth rebuild, bundle, evaluation, upload | ~3.9 | 1.0 | 0.1 |
+| **Total** | | **128.4** | **12.8** |
+
+Without the idle time: **~80 CU (~$8)** — 77 GPU + ~2 CPU (~8.5 h of CPU actually needed).
+Project Colab spend to 2026-11-18: 138 CU (128 for 12 Nov, ~10 for the 5 Nov tests and the
+inflation A/B test).
+
+### 10.2 Storage on source.coop (measured 2026-11-17)
+
+| Path | Size | Kind |
+|---|---|---|
+| `hc-inputs-tmp/1112/` | **283.5 GB** | 271 pkls × 0.97 GB = 263 GB + EDA GRIBs 20.3 GB; transient |
+| `hc-products/1112/` | 8.9 GB | 271 members × ~31 MB + truth + bundle; keep |
+| `hc-inputs-tmp/1105/` | 230.1 GB | paused 5 Nov run; transient |
+| `hc-products/1105/`, `hc-products-abtest/` | 0.8 GB | keep |
+| **Total** | **~523 GB** | |
+
+source.coop is free for this today. If it were paid object storage:
+
+- storage of one cycle's inputs for a week: 284 GB ≈ **$1.5** (S3 Standard, $0.023/GB-month);
+- **reading them back dominates**: the L4s read 263 GB once; at S3 internet egress ($0.09/GB)
+  that is **~$24 per cycle, three times the GPU cost**; a GCS bucket costs $0.02–0.08/GB
+  depending on the region Colab assigns (Taiwan, Singapore and us-west4 were seen), ~$5–21;
+- kept products: 9 GB per cycle → ~460 GB per year (~$10/month on S3 by the end of the year);
+  the compact bundle alone (~0.4 GB per cycle) → ~20 GB per year.
+
+### 10.3 Cost model for bc-fp16FahamuAIFSv2
+
+Unit costs measured: **0.285 CU per member** (8.8 min on L4 at 1.94 CU/h); ~2 CU of CPU per
+cycle (~8.5 h at 0.26 CU/h: pkls, EDA, truth, bundle, evaluation); 80 s of setup per L4.
+
+| Scenario | Members per cycle | CU per cycle | $ per cycle | $ per year (52) | Wall time |
+|---|---|---|---|---|---|
+| **A. As run for 12 Nov:** full hindcast every week | 271 | ~80 | ~$8 | ~$420 | ~14 h on 3 L4 + ~5 h pkls + ~4 h evaluation |
+| **B. Archive once:** 52 dates × 220 hindcast members | 11 440 once | ~3 330 once | ~$330 once | — | ~5 weeks of 3 L4 (part-time) |
+| ↳ then weekly: 51 real-time + 11 new-year members (rolls the 20-year window) | 62 | ~20 | ~$2 | ~$100 | ~3 h on 3 L4 |
+| ↳ or weekly with the real-time members from the GPU box: 11 members | 11 | ~5 | ~$0.5 | ~$25 | ~1 h |
+
+Transient storage: A ~284 GB per cycle for a few days; B ~13 GB per week (62 pkls), the one-off
+build ~284 GB per date if pkls are deleted as each date completes. Building the perturbed
+members on the GPU runtime from the control + EDA files instead of storing them would cut the
+inputs from ~284 GB to ~40 GB per date, for ~+6 CU per cycle (~1 min of CPU per member on L4).
+
+### 10.4 Avoidable cost, and the fixes
+
+| Cause | Cost on 12 Nov | Fix |
+|---|---|---|
+| L4 runtimes left on after their worker exited | 19.4 CU | stop each runtime as soon as its worker log shows `WORKER done` |
+| stale CLAIM of a member waited out for up to 3 h | ~6 CU | worker claim TTL lowered from 3 h to 45 min (a member takes ~9 min) |
+| L4s started before the hindcast pkls existed (MARS tape) | ~18 CU | start the L4s when the real-time and first hindcast years are on source.coop, or start one L4 first |
+| CPU runtime ended at ~24 h with truth only on its disk | index truth (~120 CDS requests) lost | every product saved to source.coop when made |

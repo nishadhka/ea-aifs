@@ -183,7 +183,9 @@ if __name__ == "__main__":
     ap.add_argument("--years", default=None, help="e.g. 2006-2025")
     ap.add_argument("--members", default=None, help="e.g. 1 or 1-11")
     ap.add_argument("--max", type=int, default=0, help="stop after this many members (0 = all)")
-    ap.add_argument("--claim-ttl", type=float, default=3 * 3600)
+    ap.add_argument("--claim-ttl", type=float, default=45 * 60,
+                    help="seconds before another worker may retake a stale claim "
+                         "(a member takes ~9 min; 3 h left GPUs waiting, 2026-11-15)")
     ap.add_argument("--wait", type=float, default=0,
                     help="when nothing is claimable, poll every 2 min for new pkls for up to "
                          "this many seconds (pkls still being built), then exit")
