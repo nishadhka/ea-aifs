@@ -110,8 +110,10 @@ $PY check_submissions_paged.py --date 20261105      # 6/9
 Validation before 3c: 6 arrays `(2, 5, 121, 240)`, NaN 0, Σ = 1 everywhere (to 1e-15);
 `prepare_aiwq_submission` read all 6 at `(5, 121, 240)`; dry run picked
 `aiwq/ensemble_quintile_probabilities_20261105_v2.nc`, team Fahamu, model fp16FahamuAIFSv2.
-Weeks 2026-11-23 / 2026-11-30. Global mean P(Q5) for `2t` **0.514** (week 3) and **0.511**
-(week 4) — a stronger warm shift than 20261029's 0.423.
+Weeks 2026-11-23 / 2026-11-30. Global mean P(Q5) for `2t` **0.412** (3b's own unweighted
+grid mean, comparable with 20261029's 0.423); latitude-weighted it is 0.514 / 0.511 for weeks
+3 / 4. *(Corrected 2026-11-20: this line first compared the weighted value with 20261029's
+unweighted 0.423 and called it a stronger warm shift. It is not.)*
 
 ---
 
@@ -132,6 +134,13 @@ $PY -u ts-mjo/vpm_index.py --store $BASE/icechunk_o96 --init 20261105 \
     --dump-bands /tank/projects/mjo_model_clim/bands_20261105.npz \
     --out $BASE/mjo_probs_20261105.nc
 ```
+
+**Made afterwards, 2026-11-13 (not submitted):** `ts_days_probs_20261105_tracked.nc`
+(8.0 tracks/member; terciles 20261123 as published, 20261130 built with AI-WQ's
+`TS_processing.compute_20yr_TStercile_climatology`), `mjo_probs_20261105.nc` and
+`bands_20261105.npz` (modal 8/8/8/1, `P(inactive)` 0.02 / 0.235 at +21 / +28), and
+`indices/indices_mNNN.npz` for all 51 members. Bundled with the member files in
+`/home/ezra/aifs_20261105_bundle.zip` for the Colab bias correction.
 
 **Rule for later cycles:** the chain's "CHAIN COMPLETE through 3b" is not the end of the
 cycle; TS and MJO must follow before the window closes.
