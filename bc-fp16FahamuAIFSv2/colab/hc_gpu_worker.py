@@ -209,7 +209,16 @@ if __name__ == "__main__":
                 continue
             break
         idle_since = None
-        t = run_one(a.mmdd, *picked)
+        try:
+            t = run_one(a.mmdd, *picked)
+        except Exception as e:                 # e.g. source.coop 520 on download/upload
+            print(f"[{picked[0]}{a.mmdd} m{picked[1]:03d}] FAILED with {type(e).__name__}: "
+                  f"{str(e)[:200]}", flush=True)
+            try:
+                sc_io.rm(sc_io.product_prefix(a.mmdd, picked[0], picked[1]) + "CLAIM")
+            except Exception:
+                pass
+            t = None
         if t:
             done.append(t)
         else:
