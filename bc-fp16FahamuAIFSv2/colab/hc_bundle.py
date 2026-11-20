@@ -85,16 +85,17 @@ def one_set(mmdd, year, tag, small_dir, out, work):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--mmdd", required=True)
-    ap.add_argument("--years", required=True)
+    ap.add_argument("--years", default=None, help="hindcast years, e.g. 2006-2025 (omit: real-time only)")
     ap.add_argument("--rt-year", type=int, default=None)
     ap.add_argument("--out", required=True)
     ap.add_argument("--no-upload", action="store_true")
     a = ap.parse_args()
-    y0, _, y1 = a.years.partition("-")
     work = a.out + "_work"
     os.makedirs(work, exist_ok=True)
-    for y in range(int(y0), int(y1 or y0) + 1):
-        one_set(a.mmdd, y, f"hc{y}{a.mmdd}", f"hc15/{y}{a.mmdd}", a.out, work)
+    if a.years:
+        y0, _, y1 = a.years.partition("-")
+        for y in range(int(y0), int(y1 or y0) + 1):
+            one_set(a.mmdd, y, f"hc{y}{a.mmdd}", f"hc15/{y}{a.mmdd}", a.out, work)
     if a.rt_year:
         rt = f"{a.rt_year}{a.mmdd}"
         one_set(a.mmdd, a.rt_year, rt, f"rt15/{rt}", a.out, work)

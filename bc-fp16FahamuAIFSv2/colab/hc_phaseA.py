@@ -96,9 +96,13 @@ def one_realtime(date, member, control_member=51):
            "--source", "gcs", "--out", out]
     if member == control_member:
         cmd += ["--control-member", str(control_member)]
-    with open(os.path.join(WORK, f"rt_{date}_m{member:03d}.log"), "w") as fh:
-        r = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT)
     pkl = os.path.join(out, f"proto_input_state_member_{member:03d}.pkl")
+    for attempt in range(3):   # earthkit cache races between parallel builds (4/51 on 19 Nov)
+        with open(os.path.join(WORK, f"rt_{date}_m{member:03d}.log"), "w") as fh:
+            r = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT)
+        if r.returncode == 0 and os.path.exists(pkl):
+            break
+        time.sleep(20 * (attempt + 1))
     if r.returncode or not os.path.exists(pkl):
         print(f"[{date} m{member:03d}] REALTIME BUILD FAILED", flush=True)
         return member, "fail"

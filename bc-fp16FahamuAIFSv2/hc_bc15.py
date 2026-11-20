@@ -136,7 +136,7 @@ def model(init, base=None):
     return dict(ts=ts, mjo=np.stack(mjo), idx=Members([f"{d}/indices.npz" for d in ds_]))
 
 
-def collect(md, y0, y1):
+def collect(md, y0, y1, need_ts=True):
     yrs, M, T = [], {}, {}
     for y in range(y0, y1 + 1):
         i = init_of(y, md)
@@ -148,7 +148,7 @@ def collect(md, y0, y1):
             print(f"  {y}: no index truth (TS/MJO only)")
         yrs.append(y)
         M[y] = m
-        T[y] = dict(ts=ts_truth(i), mjo=mjo_truth(i), idx=t)
+        T[y] = dict(ts=ts_truth(i) if need_ts else None, mjo=mjo_truth(i), idx=t)
     return yrs, M, T
 
 
@@ -343,11 +343,11 @@ def rt_members(date):
                   if os.path.exists(os.path.join(d, m, "ts_days.nc")))
 
 
-def apply(date):
-    md = date[4:8]
+def apply(date, hindcast_md=None):
+    md = hindcast_md or date[4:8]
     ev = json.load(open(f"{S}/hc15_eval_{md}.json"))
     yrs = ev["years"]
-    _, M, T = collect(md, min(yrs), max(yrs))
+    _, M, T = collect(md, min(yrs), max(yrs), need_ts=False)   # apply needs no TS truth
     base = f"{RUN}/{date}_0000"
     rt = f"{base}/products15"
     out = f"{base}/aiwq_bc_hc"
@@ -457,5 +457,6 @@ if __name__ == "__main__":
     sp = ap.add_subparsers(dest="cmd", required=True)
     p = sp.add_parser("evaluate"); p.add_argument("md"); p.add_argument("y0", type=int); p.add_argument("y1", type=int)
     p = sp.add_parser("apply"); p.add_argument("--date", required=True)
+    p.add_argument("--hindcast-md", default=None, help="MMDD of the hindcast to correct with")
     a = ap.parse_args()
-    evaluate(a.md, a.y0, a.y1) if a.cmd == "evaluate" else apply(a.date)
+    evaluate(a.md, a.y0, a.y1) if a.cmd == "evaluate" else apply(a.date, a.hindcast_md)
