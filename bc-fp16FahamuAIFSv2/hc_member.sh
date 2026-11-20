@@ -18,12 +18,13 @@
 set -u
 DT=$1; STATE=$2; OUT=$3
 D=${DT%_*}
-PY=/tank/projects/micromamba/envs/aifs-gpu/bin/python
-REPO=/home/ezra/ea-aifs/fp16FahamuAIFSv2
+# Defaults are the GPU box; Colab (colab/hc_gpu_worker.py) overrides them by environment.
 HERE=$(cd "$(dirname "$0")" && pwd)
-WORK=/tank/projects/bc-aifs/hc_work/$DT
-VPM=/tank/projects/era5_vpm_clim
-export HF_HOME=/tank/projects/hf_cache
+PY=${HC_PY:-/tank/projects/micromamba/envs/aifs-gpu/bin/python}
+REPO=${HC_REPO:-/home/ezra/ea-aifs/fp16FahamuAIFSv2}
+WORK=${HC_WORK:-/tank/projects/bc-aifs/hc_work}/$DT
+VPM=${HC_VPM:-/tank/projects/era5_vpm_clim}
+export HF_HOME=${HF_HOME:-/tank/projects/hf_cache}
 mkdir -p "$WORK" "$OUT"
 cd "$REPO" || exit 1
 say(){ echo "### $(date -u +%H:%M:%S) $DT $*"; }
@@ -48,13 +49,18 @@ grep -q "Successful: 1/1" "$WORK/3a.log" || fail 3a 3a.log
 $PY -u ts-mjo/ts_days.py --store "$WORK/icechunk_n320" --tag cycle-$DT --init $D \
     --out "$OUT/ts_days.nc" > "$WORK/ts.log" 2>&1 || fail ts_days ts.log
 
+# HC_OPTIONAL=1 (Colab): skip MJO / indices when their inputs are missing instead of aborting
+if [ -f $VPM/vpm_clim_1991_2020.npz ] || [ "${HC_OPTIONAL:-0}" != 1 ]; then
 $PY -u ts-mjo/vpm_index.py --store "$WORK/icechunk_o96" --init $D \
     --clim $VPM/vpm_clim_1991_2020.npz --eofs $VPM/rmm_basis.npz \
     --dump-bands "$OUT/mjo_bands.npz" --out "$OUT/mjo_probs.nc" > "$WORK/mjo.log" 2>&1 \
     || fail vpm_index mjo.log
+else say "SKIP vpm_index: no $VPM/vpm_clim_1991_2020.npz"; fi
 
+if [ -f "${HC_LSM_1P5:-/tank/projects/bc-aifs/aiwq/land_sea_mask_1pt5DEG.nc}" ] || [ "${HC_OPTIONAL:-0}" != 1 ]; then
 $PY -u "$HERE/hc_extract.py" --store "$WORK/icechunk_o96" --member 0 --init $D \
     --out "$OUT/indices.npz" > "$WORK/extract.log" 2>&1 || fail hc_extract extract.log
+else say "SKIP hc_extract: no AI-WQ 1.5 deg land-sea mask"; fi
 
 du -sh "$WORK"/icechunk_* | sed "s/^/### store size /"
 rm -rf "$WORK"/icechunk_o96 "$WORK"/icechunk_n320

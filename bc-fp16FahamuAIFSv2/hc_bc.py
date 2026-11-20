@@ -145,8 +145,10 @@ def cmd_evaluate(md, y0, y1):
     print(f"wrote {S}/hc_choice_{md}.json")
 
 
-def cmd_apply(date, setting_all=None):
-    md = date[4:8]
+def cmd_apply(date, setting_all=None, hindcast_md=None):
+    """hindcast_md: correct with another date's hindcast (e.g. the 12 Nov hindcast for the
+    19 Nov forecast when the 19 Nov one is not ready; the bias at a lead changes slowly)."""
+    md = hindcast_md or date[4:8]
     cfg = json.load(open(f"{S}/hc_choice_{md}.json"))
     if setting_all:
         cfg["choice"] = {v: setting_all for v in B.VARS}
@@ -192,6 +194,8 @@ if __name__ == "__main__":
         p = sp.add_parser(c)
         p.add_argument("md"); p.add_argument("y0", type=int); p.add_argument("y1", type=int)
     p = sp.add_parser("apply"); p.add_argument("--date", required=True)
+    p.add_argument("--hindcast-md", default=None,
+                   help="MMDD of the hindcast to correct with (default: the forecast's own date)")
     p.add_argument("--setting", default=None,
                    help="use this setting for all variables instead of the evaluate choice, "
                         "e.g. sig_a0.5")
@@ -201,4 +205,4 @@ if __name__ == "__main__":
     elif a.cmd == "evaluate":
         cmd_evaluate(a.md, a.y0, a.y1)
     else:
-        cmd_apply(a.date, a.setting)
+        cmd_apply(a.date, a.setting, a.hindcast_md)

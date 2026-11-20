@@ -38,9 +38,9 @@ from scipy.ndimage import gaussian_filter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-CACHE = "/tank/projects/bc-aifs"
-RUN = "/tank/projects/aifs-run"
-ENV = "/home/ezra/ea-aifs/fp16FahamuAIFSv2/.env"
+CACHE = os.environ.get("BC_CACHE", "/tank/projects/bc-aifs")
+RUN = os.environ.get("BC_RUN", "/tank/projects/aifs-run")
+ENV = os.environ.get("BC_ENV", "/home/ezra/ea-aifs/fp16FahamuAIFSv2/.env")
 
 # where each cycle's per-member 1.5 deg files live. 0709 and 0813 were regridded by
 # older routes (eval rerun; via O96) -- kept, but flagged in the output.
@@ -104,7 +104,10 @@ def aiwq():
     if _R is None:
         from dotenv import load_dotenv
         load_dotenv(ENV)
-        _PW = os.environ["AIWQ_PASSWORD"]
+        # AI-WQ moved to ECBox for start dates >= 2026-08-13: the package then takes the
+        # ECBox token in place of the (closed) FTP password
+        _PW = (os.environ.get("AIWQ_ECBOX_TOKEN") or os.environ.get("ecbox")
+               or os.environ["AIWQ_PASSWORD"])
         os.makedirs(os.path.join(CACHE, "aiwq"), exist_ok=True)  # FTP writes here; no auto-create
         from AI_WQ_package import retrieve_evaluation_data as R, forecast_evaluation as E
         _R, _E = R, E
@@ -143,6 +146,9 @@ def clim(wdate, var):
 
 
 def lsm():
+    local = os.environ.get("HC_LSM_1P5")             # the same AI-WQ file, already on disk
+    if local and os.path.exists(local):
+        return xr.open_dataarray(local)
     R, _, pw = aiwq()
     return _quiet(R.retrieve_land_sea_mask, pw, local_destination=os.path.join(CACHE, "aiwq"))
 

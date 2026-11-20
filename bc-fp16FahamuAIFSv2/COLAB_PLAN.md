@@ -2,8 +2,9 @@
 
 Plan for moving the hindcast (README §0.2, up to 220 members per date) from this box to
 Google Colab, driven from the terminal with the Colab CLI and paid with Colab Pro compute
-units. **Status: plan. Nothing has run on Colab yet.** §6 is the test to run first; §5 lists
-the routines and expected run times for each ensemble size.
+units. **Status (2026-11-12): tests 1–4 passed on L4, measured numbers in §9.** The 20 control
+pkls for 5 Nov are on source.coop and one full member ran end to end on a Colab L4 in
+9.4 min (0.30 CU). §5 still lists the routines and the original estimates.
 
 ## 1. Why
 
@@ -216,3 +217,174 @@ Decision after test 4:
 - [note.com: Trying out Google Colab CLI](https://note.com/npaka/n/n3ad5e2331e00?hl=en)
 - [McCormick: Colab GPUs features and pricing](https://mccormickml.com/2024/04/23/colab-gpus-features-and-pricing/)
 - [varlog-info: Colab compute unit consumption](https://varlog-info.pages.dev/colab-credit-consumption-comparison-2024/)
+
+## 9. Measured on Colab, 2026-11-12 (5 Nov, control)
+
+Scripts in `colab/`: `hc_colab.sh` (local driver: up / push / creds / phaseA / setup /
+worker / stop), `hc_phaseA.py` (build pkls → source.coop), `hc_gpu_setup.sh` (GPU env),
+`hc_gpu_worker.py` (claim-and-skip worker around the unchanged `hc_member.sh`), `sc_io.py`
+(source.coop I/O). `era5_state_pkl.py`, `hc_member.sh` and `hc_extract.py` take their paths
+from the environment, with the GPU box paths as defaults.
+
+### 9.1 Where things live
+
+| | Path |
+|---|---|
+| Input pkls (temporary, delete after the members run) | `s3://e4drr-project/forecasts/fp16FahamuAIFSv2/hc-inputs-tmp/<MMDD>/<YYYY>/input_state_member_<NNN>.pkl` |
+| Products, DONE marker last | `s3://e4drr-project/forecasts/fp16FahamuAIFSv2/hc-products/<MMDD>/<YYYY>/m<NNN>/` |
+| Endpoint | `https://data.source.coop` (reads anonymous; the repository is public) |
+
+Credentials: source.coop S3 credentials from `source-coop creds`, the MARS key from
+`.ecmwfapirc`. Both are piped over ssh into `/root/` on the runtime (mode 600), never into
+`colab exec` code (the Colab CLI records that in `~/.config/colab-cli/history/`). The S3
+credentials last ≤ 12 h: re-run `hc_colab.sh creds NAME` before they expire on long runs.
+
+### 9.2 Phase A (CPU high-RAM runtime, 0.26 CU/h)
+
+| | Colab | GPU box (§5.3) |
+|---|---|---|
+| ARCO, 100 fields × 2 times | **13 s** | 410–470 s |
+| regrid to N320 | 7 s | |
+| MARS ecWAM waves (2 × 8.8 MB, disk, not tape) | ~50 s incl. queue | seconds to 3 h |
+| **one state, total** | **80–145 s** | ~16 min |
+| upload 971 MB to source.coop | 16–35 s | |
+| anonymous download to a Colab VM | 6–7 s | |
+| 20 states, 4 at a time | **~12 min wall, < 0.1 CU** | ~5.3 h |
+
+All 20 pkls (2006–2025) are 971 413 699 bytes, 112 fields of (2, 542080), float64, wave
+land 30.3 %. The reference wave mask (`ref_wave_land_n320.npy`) was rebuilt on Colab from
+the 20261029 IFS open-data member 1, as in the runbook (land 30.29 %).
+
+Two fixes were needed: (1) `arco_fields` no longer uses dask, because recent dask materialises
+the 1.3 M-chunk graph and was OOM-killed at 52 GB; it now reads with xarray lazy indexing, one
+read per (variable, time) with all 14 levels from the one 37-level chunk; (2) whole-upload
+retries, after one HTTP 520 from source.coop in 20 uploads.
+
+Not yet checked: the pass mark of test 2 (pkl identical to the GPU box build of the same
+date). The GPU box pkls were deleted after the run; rebuild one there, or compare the 3a
+files (§9.3).
+
+### 9.3 Phase B (L4, 1.94 CU/h)
+
+| | Measured |
+|---|---|
+| runtime start | 4 s |
+| bootstrap: uv venv Python 3.12, torch 2.7.0+cu126, anemoi 0.8.3, flash-attn 2.7.4.post1, icechunk 2.1.0, checkpoint | **80 s** (pip 40, flash-attn 19, checkpoint 21) |
+| pkl download | 7 s |
+| rollout 792 h (O96 all steps + N320 sidecar 432–792 h), incl. model load | **487 s** (~3.6 s per step; GPU box 290 s) |
+| extraction: 3a + TS days | 34 s |
+| upload products | 32 s |
+| **one member, wall** | **9.4 min = 0.30 CU ≈ $0.03** |
+| peak GPU memory | 11 634 MiB of 23 034 |
+| stores before deletion | O96 2.0 GB, N320 1.0 GB |
+
+MJO (`vpm_index.py`) and the indices (`hc_extract.py`) were **skipped**: their inputs
+(`vpm_clim_1991_2020.npz`, `rmm_basis.npz`, the AI-WQ `land_sea_mask_1pt5DEG.nc`) are
+only on the GPU box. Copy them to the runtime's `/content/aux/` to run all 15 products.
+
+The 1.5° file is written as uncompressed float64: 209 MB (the "41 MB" in §3 is the size on
+the GPU box's compressed filesystem). The worker now applies lossless zlib before upload.
+
+### 9.4 Cost from the measured L4 numbers (0.30 CU per member, ~$0.10 per CU)
+
+| | Members | L4 hours | CU | Cost | Wall time, 1 / 3 runtimes |
+|---|---|---|---|---|---|
+| Control only, one date | 20 | 3.1 | 6 | $0.6 | 3.1 h / 1.1 h |
+| Control + 4 EDA, one date | 100 | 15.7 | 30 | $3 | 16 h / 5.3 h |
+| **Control + 10 EDA, one date** | **220** | **34** | **67** | **$6.7** | **34 h / 11.5 h** |
+| All 52 dates × 220 | 11 440 | 1 790 | 3 480 | $350 | |
+| Phase A per date (CPU) | | | < 1 | < $0.1 | |
+
+Decision (§6): L4 at 9.4 min per member is at the edge of the 8–15 min band. An A100
+(6.73 CU/h) would be cheaper per member only below ~2.7 min per member. **L4 is the GPU to
+use.** The balance on 2026-11-12, 462.9 CU, covers about 6 dates at 220 members.
+
+Before the 220-member run: the 200 perturbed pkls need `era5_eda_perturb.py` (A2–A3, not
+written). The 19 control years not run here already exist from the GPU box run (§5.3).
+
+### 9.5 Commands, as run
+
+```bash
+B=bc-fp16FahamuAIFSv2/colab
+$B/hc_colab.sh up hcA cpu;  $B/hc_colab.sh push hcA;  $B/hc_colab.sh creds hcA
+# once per runtime: reference wave mask from the IFS 20261029 open-data member 1
+#   (s3_grib_pkl_input_aifsens_v2_proto.py --date 20261029_0000 --member 1 --source gcs,
+#    then np.save('/content/bc/ref_wave_land_n320.npy', ~isfinite(swh[1])))
+$B/hc_colab.sh phaseA hcA 1105 2025-2006 4        # log /content/phaseA_1105.log
+$B/hc_colab.sh stop hcA
+
+$B/hc_colab.sh up hcB L4;  $B/hc_colab.sh push hcB;  $B/hc_colab.sh creds hcB
+$B/hc_colab.sh setup hcB                          # log /content/setup.log, "SETUP OK"
+$B/hc_colab.sh worker hcB 1105 --years 2025 --members 1 --max 1   # log /content/worker_1105.log
+$B/hc_colab.sh stop hcB
+```
+
+Always end with `stop` and check `colab usage` shows 0.00/hr: five CPU sessions left
+running from 5 to 11 Nov cost ~130 CU.
+
+## 10. Measured cost of a full cycle, and the cost model (12 Nov 2026)
+
+From the 12 Nov cycle (`RUNBOOK_20261112.md`): 220 hindcast + 51 real-time members on Colab,
+starting states on source.coop, corrected entry submitted as `bcfp16FahamuAIFSv2`. Compute units
+(CU) at ~$0.10 each (100 for $9.99). Balance 454.31 → 325.95 = **128.4 CU ≈ $12.8**.
+
+### 10.1 Where the compute units went
+
+| Item | Hours | CU | ≈ $ |
+|---|---|---|---|
+| 3 × L4 billed (2026-11-14 15:44 → 11-15 12:30 UTC, 20.8 h each) | 62.5 GPU-h | 121.2 | 12.1 |
+| ↳ running members: 271 × 8.8 min (incl. pkl download and product upload) | 39.8 | 77.2 | 7.7 |
+| ↳ idle after the last member: two L4s ~4.6 h each, the third ~0.8 h | 10.0 | 19.4 | 1.9 |
+| ↳ idle during the run: waiting for hindcast pkls (MARS tape) and, on one L4, ~3.2 h for 2 stale member claims to expire (3 h claim TTL) | 12.7 | 24.6 | 2.5 |
+| CPU runtime 1: pkls, EDA, truth (ended by Colab at ~24 h) | ~24 | 6.3 | 0.6 |
+| CPU runtime 2: truth rebuild, bundle, evaluation, upload | ~3.9 | 1.0 | 0.1 |
+| **Total** | | **128.4** | **12.8** |
+
+Without the idle time: **~80 CU (~$8)** — 77 GPU + ~2 CPU (~8.5 h of CPU actually needed).
+Project Colab spend to 2026-11-18: 138 CU (128 for 12 Nov, ~10 for the 5 Nov tests and the
+inflation A/B test).
+
+### 10.2 Storage on source.coop (measured 2026-11-17)
+
+| Path | Size | Kind |
+|---|---|---|
+| `hc-inputs-tmp/1112/` | **283.5 GB** | 271 pkls × 0.97 GB = 263 GB + EDA GRIBs 20.3 GB; transient |
+| `hc-products/1112/` | 8.9 GB | 271 members × ~31 MB + truth + bundle; keep |
+| `hc-inputs-tmp/1105/` | 230.1 GB | paused 5 Nov run; transient |
+| `hc-products/1105/`, `hc-products-abtest/` | 0.8 GB | keep |
+| **Total** | **~523 GB** | |
+
+source.coop is free for this today. If it were paid object storage:
+
+- storage of one cycle's inputs for a week: 284 GB ≈ **$1.5** (S3 Standard, $0.023/GB-month);
+- **reading them back dominates**: the L4s read 263 GB once; at S3 internet egress ($0.09/GB)
+  that is **~$24 per cycle, three times the GPU cost**; a GCS bucket costs $0.02–0.08/GB
+  depending on the region Colab assigns (Taiwan, Singapore and us-west4 were seen), ~$5–21;
+- kept products: 9 GB per cycle → ~460 GB per year (~$10/month on S3 by the end of the year);
+  the compact bundle alone (~0.4 GB per cycle) → ~20 GB per year.
+
+### 10.3 Cost model for bc-fp16FahamuAIFSv2
+
+Unit costs measured: **0.285 CU per member** (8.8 min on L4 at 1.94 CU/h); ~2 CU of CPU per
+cycle (~8.5 h at 0.26 CU/h: pkls, EDA, truth, bundle, evaluation); 80 s of setup per L4.
+
+| Scenario | Members per cycle | CU per cycle | $ per cycle | $ per year (52) | Wall time |
+|---|---|---|---|---|---|
+| **A. As run for 12 Nov:** full hindcast every week | 271 | ~80 | ~$8 | ~$420 | ~14 h on 3 L4 + ~5 h pkls + ~4 h evaluation |
+| **B. Archive once:** 52 dates × 220 hindcast members | 11 440 once | ~3 330 once | ~$330 once | — | ~5 weeks of 3 L4 (part-time) |
+| ↳ then weekly: 51 real-time + 11 new-year members (rolls the 20-year window) | 62 | ~20 | ~$2 | ~$100 | ~3 h on 3 L4 |
+| ↳ or weekly with the real-time members from the GPU box: 11 members | 11 | ~5 | ~$0.5 | ~$25 | ~1 h |
+
+Transient storage: A ~284 GB per cycle for a few days; B ~13 GB per week (62 pkls), the one-off
+build ~284 GB per date if pkls are deleted as each date completes. Building the perturbed
+members on the GPU runtime from the control + EDA files instead of storing them would cut the
+inputs from ~284 GB to ~40 GB per date, for ~+6 CU per cycle (~1 min of CPU per member on L4).
+
+### 10.4 Avoidable cost, and the fixes
+
+| Cause | Cost on 12 Nov | Fix |
+|---|---|---|
+| L4 runtimes left on after their worker exited | 19.4 CU | stop each runtime as soon as its worker log shows `WORKER done` |
+| stale CLAIM of a member waited out for up to 3 h | ~6 CU | worker claim TTL lowered from 3 h to 45 min (a member takes ~9 min) |
+| L4s started before the hindcast pkls existed (MARS tape) | ~18 CU | start the L4s when the real-time and first hindcast years are on source.coop, or start one L4 first |
+| CPU runtime ended at ~24 h with truth only on its disk | index truth (~120 CDS requests) lost | every product saved to source.coop when made |

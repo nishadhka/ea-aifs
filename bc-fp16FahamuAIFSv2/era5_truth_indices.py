@@ -26,10 +26,12 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, "/home/ezra/ea-aifs/fp16FahamuAIFSv2/run-pre50r1-dates")
+sys.path.insert(0, os.path.join(os.environ.get("EA_AIFS_ROOT", os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                                "fp16FahamuAIFSv2", "run-pre50r1-dates"))
 import hc_extract as X  # noqa: E402
+from api_polite import polite  # noqa: E402
 
-CACHE = "/tank/projects/bc-aifs"
+CACHE = os.environ.get("BC_CACHE", "/tank/projects/bc-aifs")
 AREA = (40, -25, -40, 120)                    # N, W, S, E (CDS order)
 GRID = 1.0
 NLAT, NLON = 81, 146
@@ -67,23 +69,24 @@ def cds_get(dataset, inputs, target):
                            data_format="grib", download_format="unarchived")}
     for attempt in range(5):
         try:
-            job = F._req(f"{F.CDS}/retrieve/v1/processes/{dataset}/execute",
-                         json.dumps(body).encode(), tok)
-            jid, t0 = job["jobID"], time.time()
-            while True:
-                st = F._req(f"{F.CDS}/retrieve/v1/jobs/{jid}", None, tok)["status"]
-                if st == "successful":
-                    break
-                if st in ("failed", "dismissed"):
-                    raise RuntimeError(f"CDS job {jid} {st}")
-                if time.time() - t0 > 7200:
-                    raise RuntimeError(f"CDS job {jid} still {st} after 2 h")
-                time.sleep(10)
-            url = F._req(f"{F.CDS}/retrieve/v1/jobs/{jid}/results", None, tok)["asset"]["value"]["href"]
-            tmp = target + ".part"
-            urllib.request.urlretrieve(url, tmp)
-            os.replace(tmp, target)
-            return target
+            with polite("cds"):             # one CDS job at a time per machine
+                job = F._req(f"{F.CDS}/retrieve/v1/processes/{dataset}/execute",
+                             json.dumps(body).encode(), tok)
+                jid, t0 = job["jobID"], time.time()
+                while True:
+                    st = F._req(f"{F.CDS}/retrieve/v1/jobs/{jid}", None, tok)["status"]
+                    if st == "successful":
+                        break
+                    if st in ("failed", "dismissed"):
+                        raise RuntimeError(f"CDS job {jid} {st}")
+                    if time.time() - t0 > 7200:
+                        raise RuntimeError(f"CDS job {jid} still {st} after 2 h")
+                    time.sleep(10)
+                url = F._req(f"{F.CDS}/retrieve/v1/jobs/{jid}/results", None, tok)["asset"]["value"]["href"]
+                tmp = target + ".part"
+                urllib.request.urlretrieve(url, tmp)
+                os.replace(tmp, target)
+                return target
         except Exception as e:                       # network blips, CDS 5xx
             print(f"  {os.path.basename(target)} attempt {attempt+1} failed: {e}", flush=True)
             time.sleep(60 * (attempt + 1))
@@ -189,5 +192,5 @@ if __name__ == "__main__":
             print(f"{i}: {f}", flush=True)
         except Exception as e:
             print(f"{i}: FAILED {e}", flush=True)
-    with ThreadPoolExecutor(max_workers=2) as ex:      # x3 requests each = 6 CDS jobs at once
+    with ThreadPoolExecutor(max_workers=2) as ex:      # CDS jobs still one at a time (api_polite)
         list(ex.map(one, inits))
