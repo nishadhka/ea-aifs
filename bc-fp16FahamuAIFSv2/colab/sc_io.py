@@ -76,10 +76,19 @@ def ls(prefix):
     return out
 
 
-def get(key, path):
+def get(key, path, tries=6):
+    """Download with retries: source.coop answers transient 520/525 (2026-11-20 they killed
+    all three GPU workers, whose runtimes then idled ~10 h)."""
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    _anon().download_file(BUCKET, key, path, Config=XFER)
-    return path
+    for i in range(tries):
+        try:
+            _anon().download_file(BUCKET, key, path, Config=XFER)
+            return path
+        except Exception as e:
+            if i == tries - 1:
+                raise
+            print(f"  get {key}: {type(e).__name__} {str(e)[:120]}; retry {i+1}", flush=True)
+            time.sleep(20 * (i + 1))
 
 
 def put(path, key, tries=5):
