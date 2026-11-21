@@ -139,6 +139,13 @@ def waef_paths(dt):
     return b + ".grib2", b + ".index"
 
 
+def wave_paths(dt):
+    """Deterministic (HRES) wave model, step 0 - the unperturbed wave state."""
+    ymd, hh, st = _stamp(dt)
+    b = f"{ymd}/{hh}z/ifs/0p25/wave/{st}-0h-wave-fc"
+    return b + ".grib2", b + ".index"
+
+
 def oper_paths(dt):
     ymd, hh, st = _stamp(dt)
     b = f"{ymd}/{hh}z/ifs/0p25/oper/{st}-0h-oper-fc"
@@ -270,16 +277,26 @@ def build_constants(idx_oper, gk_oper):
 
 
 # ---------------------------------------------------------------- per member
-def process_member(member, date, prev_date, const_fields=None):
+def process_member(member, date, prev_date, const_fields=None, control=False):
     """Build one member. `const_fields` (z/slor/sdor/lsm) are member-independent -
-    pass them in to reuse across members instead of re-fetching per member."""
+    pass them in to reuse across members instead of re-fetching per member.
+
+    control=True builds the unperturbed state. Open data publishes no ENS control
+    (cf) at step 0: the enfo/waef -ef files hold only the 50 pf members. The HRES
+    oper/wave step-0 files carry every field the pf build reads (checked against
+    the 20261104 18z and 20261105 00z indexes), and since 48r1 HRES and the ENS
+    control share the 9 km resolution and the same analysis. Those records have
+    no `number` key, so the lookup runs with number=None.
+    """
     t0 = time.time()
-    gk_t, ik_t = enfo_paths(date)
-    gk_prev, ik_prev = enfo_paths(prev_date)
+    atm_paths, wav_paths = (oper_paths, wave_paths) if control else (enfo_paths, waef_paths)
+    number = None if control else member
+    gk_t, ik_t = atm_paths(date)
+    gk_prev, ik_prev = atm_paths(prev_date)
     idx_t, idx_prev = load_index(ik_t), load_index(ik_prev)
 
-    wgk_t, wik_t = waef_paths(date)
-    wgk_prev, wik_prev = waef_paths(prev_date)
+    wgk_t, wik_t = wav_paths(date)
+    wgk_prev, wik_prev = wav_paths(prev_date)
     widx_t, widx_prev = load_index(wik_t), load_index(wik_prev)
 
     if const_fields is None:
@@ -295,10 +312,10 @@ def process_member(member, date, prev_date, const_fields=None):
         gt = time.time()
         if g == "wave":
             fields = _build_group(
-                group_jobs(widx_prev, widx_t, wgk_prev, wgk_t, member, g, None, None),
+                group_jobs(widx_prev, widx_t, wgk_prev, wgk_t, number, g, None, None),
                 decoder=decode_grib_bytes_eccodes)
         else:
-            fields = _build_group(group_jobs(idx_prev, idx_t, gk_prev, gk_t, member, g, None, None))
+            fields = _build_group(group_jobs(idx_prev, idx_t, gk_prev, gk_t, number, g, None, None))
         fields = finalize_group(g, fields)
         merged.update(fields)
         print(f"    [{g}] {len(fields)} fields ({time.time()-gt:.1f}s)")
@@ -308,7 +325,7 @@ def process_member(member, date, prev_date, const_fields=None):
     for f in ("sd", "swvl1", "swvl2"):
         merged[f][:, mask] = np.nan
 
-    print(f"  TOTAL member {member}: {len(merged)} fields, {time.time()-t0:.1f}s")
+    print(f"  TOTAL member {member}{' (control, HRES oper/wave 0h)' if control else ''}: {len(merged)} fields, {time.time()-t0:.1f}s")
     return dict(date=date, fields=merged), time.time() - t0
 
 
@@ -366,6 +383,10 @@ if __name__ == "__main__":
                     help="appended to the output pkl name, e.g. --suffix _gcs")
     ap.add_argument("--skip-existing", action="store_true",
                     help="skip members whose output pkl already exists")
+    ap.add_argument("--control-member", type=int, default=None,
+                    help="member number that is built as the unperturbed control "
+                         "from HRES oper/wave 0h, e.g. 51 (downstream code numbers "
+                         "members 1..N, so 0 is not used)")
     args = ap.parse_args()
 
     SOURCE = args.source
@@ -401,7 +422,8 @@ if __name__ == "__main__":
             continue
         print(f"\n[{i+1}/{len(members)}] member {m}")
         try:
-            state, elapsed = process_member(m, date, prev_date, const_fields)
+            state, elapsed = process_member(m, date, prev_date, const_fields,
+                                            control=(m == args.control_member))
             good = verify(state)
             with open(out_pkl, "wb") as fh:
                 pickle.dump(state, fh)

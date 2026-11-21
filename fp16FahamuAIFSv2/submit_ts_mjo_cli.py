@@ -78,8 +78,22 @@ def tercile_probs(counts, lower, upper):
     return np.array([below, near, above])
 
 
-def build_ts(ts_nc, tercile_dir, period):
-    """-> (3,4) for one forecast period, plus a text summary."""
+def build_ts(ts_nc, tercile_dir, period, fill_rule="month"):
+    """-> (3,4) for one forecast period, plus a text summary.
+
+    ``fill_rule`` decides which basin-weeks get a real forecast and which get
+    uniform 1/3:
+
+    ``month``   AI-WQ's submission-check activation table (ATL/NWP in months
+                6-11, SWIO/SEIO in 12/1/2). What this script has always done.
+    ``bounds``  every basin-week whose published terciles are non-degenerate
+                (lower != upper). This is the condition the *scorer* uses:
+                ``forecast_evaluation.calculate_RPS_TS`` applies no month mask
+                at all, and masks only where ``conditional_obs_probs`` set NaN
+                via its ``all_equal`` test on the bounds. So a basin-week with
+                real bounds is scored whatever the month, and uniform 1/3
+                there scores RPSS exactly 0 by construction.
+    """
     ds = xr.open_dataset(ts_nc)
     counts = ds["storm_days"].values                    # (member, week, basin)
     weeks = [str(w) for w in ds["week"].values]
@@ -100,11 +114,17 @@ def build_ts(ts_nc, tercile_dir, period):
     for j, b in enumerate(BASINS):
         lo, up = float(bounds[0, j]), float(bounds[1, j])
         c = counts[:, wk, j]
-        if j in act:
-            out[:, j] = tercile_probs(c, lo, up)
-            tag = ""
+        if fill_rule == "bounds":
+            forecast_it = lo != up
+            why = "degenerate bounds"
         else:
-            tag = "  [inactive -> uniform 1/3]"
+            forecast_it = j in act
+            why = "inactive"
+        if forecast_it:
+            out[:, j] = tercile_probs(c, lo, up)
+            tag = "" if j in act else "  [off-table but scoreable]"
+        else:
+            tag = f"  [{why} -> uniform 1/3]"
         lines.append(f"    {b:5s} bounds {lo:4.0f}/{up:4.0f}  mean {c.mean():5.2f} days  "
                      f"P(below,near,above) = {out[0,j]:.2f},{out[1,j]:.2f},{out[2,j]:.2f}{tag}")
     return out, valid, act, lines
@@ -132,6 +152,11 @@ def main():
     ap.add_argument("--mjo-nc")
     ap.add_argument("--variables", nargs="+", default=["TS", "MJO"],
                     choices=["TS", "MJO"])
+    ap.add_argument("--fill-rule", choices=("month", "bounds"), default="month",
+                    help="which basin-weeks get uniform 1/3: month = AI-WQ's "
+                         "activation table (default, historical behaviour); "
+                         "bounds = only degenerate terciles, which is what the "
+                         "scorer actually masks on")
     ap.add_argument("--dry-run", action="store_true",
                     help="build and validate the arrays, print them, submit nothing")
     ap.add_argument("--env-file", default=".env")
@@ -159,7 +184,7 @@ def main():
         if not (args.ts_nc and args.tercile_dir):
             raise SystemExit("TS needs --ts-nc and --tercile-dir")
         for period in (1, 2):
-            arr, valid, act, lines = build_ts(args.ts_nc, args.tercile_dir, period)
+            arr, valid, act, lines = build_ts(args.ts_nc, args.tercile_dir, period, args.fill_rule)
             print(f"\nTS period {period}  (days {18 if period==1 else 25}-"
                   f"{24 if period==1 else 31}, valid week {valid})")
             print("\n".join(lines))

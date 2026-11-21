@@ -62,13 +62,16 @@ So the published bounds do not fix the §8 problem, they **measure** it. Switchi
 friendlier climatology would only hide it — the RPSS is computed on the official bounds either
 way. The fix remains detector calibration.
 
-**Out-of-season basins need care.** `check_fc_submission.check_data_characteristics` activates
-ATL+NWP for months 6–11 and SWIO+SEIO for 12/1/2, and **only the active columns must sum to 1**
-(atol 0.2); inactive ones are unconstrained and NaN is permitted. An inactive basin's published
-bounds are `0/0`, and under the binning rule (`below: x<lower`, `above: x>=upper`, `near` only
-when `lower != upper`) that sends **all** probability to "above" — a confident forecast of a
-dormant basin. `submit_ts_mjo_cli.py` fills inactive columns with a uniform 1/3 instead:
-unscored either way, and it asserts nothing.
+**Degenerate bounds, not out-of-season months, are what makes a column unscored.**
+Read on 2026-10-30 from the package itself — see
+[§ What activates a basin](#2-what-activates-a-basin-the-bounds-not-the-month) below. The
+submission *checker* does use a month table, but the *scorer* never sees it: a basin-week is
+dropped only when its published bounds are degenerate (`lower == upper`), which for TS means
+`0/0`. Under the binning rule (`below: x<lower`, `above: x>=upper`, `near` only when
+`lower != upper`) a `0/0` column sends **all** probability to "above" — a confident forecast
+of a dormant basin — so `submit_ts_mjo_cli.py --fill-rule bounds` fills exactly those columns
+with a uniform 1/3, which is unscored either way and asserts nothing, and submits a real
+forecast everywhere the bounds are non-degenerate.
 
 Built and on disk: `/tank/projects/ibtracs/clim/TS_20yrCLIM_WEEKLYTSDAYS_terciles_*.nc`,
 from `/tank/projects/ibtracs/IBTrACS.ALL.v04r01.nc` (23 MB, NOAA/NCEI).
@@ -247,26 +250,41 @@ Our `ts_days_probs.nc` already carries exactly this: `TS_tercile_probability
 (week, basin, category)` → transpose per week. The plumbing is a dozen lines; **it is not
 the reason to wait.**
 
-### 2. Only two basins are ever scored — and for boreal-season inits they are the two
-the detector handles best
+### 2. What activates a basin: the bounds, not the month
 
 `check_fc_submission.py:246-258` builds an `active_mask` from the init month (shifted back
-7 days for `fc_period` 2) and requires the probabilities to sum to 1 **only there**:
+7 days for `fc_period` 2):
 
-| init month | basins scored |
+| init month | basins the **checker** constrains |
 |---|---|
 | **Jun–Nov** | **ATL, NWP** |
 | **Dec–Feb** | SWIO, SEIO |
 | Mar–May | *none* — the check passes vacuously |
 
-This matters more than anything else in this file. The headline measured failure above is
-that **SWIO/SEIO over-trigger in austral winter** — and for a Jun–Nov init those basins are
-not scored at all. The sensitivity table's other half is the reassuring one: every filter
-leaves **NWP unchanged at 5.8** while cutting SWIO 5.0 → 3.0, which is the correct physical
-signature. The detector's worst known bias lands outside the scored set for exactly the
-half of the year we have been running.
+**That table governs the submission check only.** It was read for three cycles as the set of
+scored basins. It is not. Verified 2026-10-30 against
+`site-packages/AI_WQ_package/forecast_evaluation.py`:
 
-That narrows the problem from four basins to two. It does not calibrate them.
+- `calculate_RPS_TS` applies **no month mask**. Its only mask is
+  `nan_quantile_mask = obs_pbs.isnull().all(dim=obs_q_name)`.
+- Those NaNs come solely from `conditional_obs_probs`, which blanks a basin-week on
+  `all_equal = (quintile_bounds.min(dim=q) == quintile_bounds.max(dim=q))`.
+- The month test is only `np.allclose(summed_values[active_mask], 1.0, atol=0.2)` — **active
+  columns only**, so a genuine forecast in an off-table column cannot be rejected.
+- `calculate_RPSS_TS` uses uniform 1/3 as its own climatological baseline, so a uniform 1/3
+  submission in a scored column earns **RPSS exactly 0** — the cost of filling by month is
+  a guaranteed zero, not a free pass.
+
+So the scored set is `{basin-week : lower != upper}`, and AI-WQ does publish non-degenerate
+bounds outside the table — **SWIO `0/2` at 2026-11-16, with a Jun–Nov init**. Hence
+`--fill-rule bounds` (20261029 onward; `month` is still the default so older cycles reproduce).
+
+The reassuring half of the sensitivity table still holds where it applies: every filter
+leaves **NWP unchanged at 5.8** while cutting SWIO 5.0 → 3.0, the correct physical signature.
+But the conclusion drawn from it — that the detector's worst bias lands outside the scored
+set for the half of the year we run — **does not hold.** SWIO can be scored in November, and
+on 20261029 it was. The over-trigger is inside the scored set whenever AI-WQ chooses to
+publish a real bound for it.
 
 ### 3. The tercile climatology is obtainable — the notes used to say otherwise
 

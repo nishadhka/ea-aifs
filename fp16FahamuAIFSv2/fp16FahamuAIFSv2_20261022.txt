@@ -1,0 +1,562 @@
+Assembled from the run logs in /tank/projects (run_1022_*.log, proto_gcs_20261022_all50.log,
+chain_20261022.log). Compute ran in background shells via chain_20261022.sh, so this is the
+genuine output of each stage rather than a literal interactive paste. Per-member blocks and
+the 51-team registration table are trimmed where marked.
+
+================================================================================
+Step 0 - open-data pre-check
+================================================================================
+(aifs-gpu) ezra@e4drr-crafd-icpac:~/ea-aifs/fp16FahamuAIFSv2$ python run-pre50r1-dates/check_open_data_inputs.py --date 20261022
+=== ECMWF open data 20261022 00z (gcs) ===
+  AIFS v2: RUNNABLE
+      sfc     9/9
+      sol     2/2
+      pl      6/6
+      levels  14/14
+      wave    11/11
+
+================================================================================
+Disk - purge authorised for 20260903 + 20260910 (95 GB free, Step 2 needs ~210 GB)
+================================================================================
+$ python cleanup_aifs_run.py --date 20260903 --yes
+   purge  aiwq/ensemble_icechunk_store     1.5 GB
+   purge  icechunk_n320_aiwq              49.8 GB
+   purge  icechunk_o96                   148.9 GB
+   purge  input_states                    45.2 GB
+   purge  nc_1p5deg                        9.7 GB
+   keep   aiwq/*.nc                  7 files (quintile + climatology)
+Deleted 5/5 paths, reclaimed ~255.3 GB
+
+$ python cleanup_aifs_run.py --date 20260910 --yes
+   purge  icechunk_o96                   152.5 GB   (+ n320 50.8, input_states 45.2, nc 9.7, aiwq store 1.5)
+Deleted 5/5 paths, reclaimed ~259.9 GB
+
+tank/projects   1.9T  1.4T  566G  71% /tank/projects
+
+================================================================================
+Step 1 - pkl creation (50 members, GCS)
+================================================================================
+(aifs-gpu) ezra@e4drr-crafd-icpac:~/ea-aifs/fp16FahamuAIFSv2$ python -u s3_grib_pkl/s3_grib_pkl_input_aifsens_v2_proto.py \
+    --date 20261022_0000 --members 1-50 --source gcs \
+    --out $BASE/input_states --skip-existing
+PROTOTYPE gribberish v2 | members 1-50 (50) | source=gcs | t=2026-10-22 00:00:00 t-6h=2026-10-21 18:00:00
+constants (z/slor/sdor/lsm) from oper 0h, shared across members ...
+  ['lsm', 'sdor', 'slor', 'z'] (5.2s)
+
+[1/50] member 1
+    [surface] 9 fields (8.8s)
+    [soil] 4 fields (4.0s)
+    [wave] 12 fields (11.6s)
+    [pl_gh] 14 fields (13.4s)
+    [pl_t] 14 fields (10.1s)
+    [pl_u] 14 fields (17.0s)
+    [pl_v] 14 fields (16.2s)
+    [pl_w] 14 fields (18.4s)
+    [pl_q] 13 fields (10.8s)
+  TOTAL member 1: 112 fields, 120.8s
+  verify: 112/112 fields, shapes={(2, 542080)}, missing=[], extra=[] -> OK
+  120.8s | avg 120.8s | ETA 98.6 min -> /tank/projects/aifs-run/20261022_0000/input_states/proto_input_state_member_001.pkl
+
+[... members 002-049 ...]
+    [pl_q] 13 fields (9.5s)
+  TOTAL member 50: 112 fields, 109.4s
+  verify: 112/112 fields, shapes={(2, 542080)}, missing=[], extra=[] -> OK
+  109.4s | avg 138.1s | ETA 0.0 min -> /tank/projects/aifs-run/20261022_0000/input_states/proto_input_state_member_050.pkl
+
+============================================================
+DONE source=gcs: 50/50 ok
+  total 115.7 min (1.93 h), avg 138.1s/member
+
+================================================================================
+Chain: rename -> Step 2 -> 3a -> 3b   (COMPUTE ONLY)
+================================================================================
+(aifs-gpu) ezra@e4drr-crafd-icpac:~/ea-aifs/fp16FahamuAIFSv2$ nohup bash /tank/projects/chain_20261022.sh > /tank/projects/chain_20261022.log 2>&1 &
+### 09:26 waiting for Step 1 to finish
+### 09:26 Step 1 ended with 50 pkl files
+### 09:26 renaming proto_ prefix (run_local_icechunk_v2.py hardcodes input_state_member_NNN.pkl)
+### 09:26 Step 2 — tier B rollout
+### 14:12 Step 2 done
+### 14:12 3a — regrid 432-792h to 1.5 deg
+### 14:20 3a done
+### 14:20 3b — quintiles
+### 14:22 3b done
+### 14:22 CHAIN COMPLETE through 3b — 3c, TS and MJO are gated on validation
+
+*** The chain finished 3b at 10-23 14:22 and nothing ran until 10-25 07:40. ***
+*** nohup ... & is not harness-tracked, so no completion notice arrived.    ***
+*** 41 h 18 m idle. See run_commands_20261022.md.                           ***
+
+--- Step 2, tier-B rollout (tail) ---
+    720h / 792h (stored 120/132, 120 commits)
+    [OK] member 049: stored 132/132 steps, 132 commits (last MXGBV0HT8VP3YYDC9V80) in 438.9s
+
+--- Member 050 (50/50) ---
+    ✅ Loaded pickle: /tank/projects/aifs-run/20261022_0000/input_states/input_state_member_050.pkl
+    Date: 2026-10-22 00:00:00 | Fields: 112
+Coupled forcings are not supported by this runner: ['lsm', 'sdor', 'slor', 'wmb', 'z']
+    120h / 792h (stored 20/132, 20 commits)
+    240h / 792h (stored 40/132, 40 commits)
+    360h / 792h (stored 60/132, 60 commits)
+    480h / 792h (stored 80/132, 80 commits)
+    600h / 792h (stored 100/132, 100 commits)
+    720h / 792h (stored 120/132, 120 commits)
+    [OK] member 050: stored 132/132 steps, 132 commits (last 1K1WB5NQZ9B5NRC32PGG) in 453.2s
+
+[TAG] icechunk_o96: cycle-20261022_0000 -> 1K1WB5NQZ9B5NRC32PGG (50/50 members)
+
+[TAG] icechunk_n320_aiwq: cycle-20261022_0000 -> KJRS6VNTK624N1ETHE8G (50/50 members)
+
+======================================================================
+DONE: 50 written, 0 skipped, 0 failed of 50 members -> /tank/projects/aifs-run/20261022_0000/icechunk_o96
+======================================================================
+
+--- 3a, regrid 432-792h to 1.5 deg ---
+Processing 50 members: 1-50
+======================================================================
+GRIB to NetCDF Processor (FP16-v2 Mode) — 1-way subprocess mode
+======================================================================
+
+============================================================
+Processing member 1 (1/50)...
+============================================================
+  [2m2026-10-23T14:12:33.761876Z[0m [33m WARN[0m [1;33micechunk_arrow_object_store[0m[33m: [33mThe LocalFileSystem storage is not safe for concurrent commits. If more than one thread/process will attempt to commit at the same time, prefer using object stores.[0m
+    [2;3mat[0m icechunk-arrow-object-store/src/lib.rs:220
+
+/home/ezra/ea-aifs/fp16FahamuAIFSv2/../shared/aifs_n320_grib_1p5defg_nc_cli.py:584: FutureWarning: In a future version of xarray the default value for join will change from join='outer' to join='exact'. This change will result in the following ValueError: cannot be aligned with join='exact' because index/labels/sizes are not equal along these coordinates (dimensions): 'step' ('step',) The recommendation is to set join explicitly for this case.
+[... members 002-049, same per-member pattern ...]
+✅ Member 50 done (0.2 min)  [50/50]  est. remaining ~0.0 min
+
+======================================================================
+PROCESSING SUMMARY (1-way)
+======================================================================
+✅ Successful: 50/50 members
+❌ Failed: 0 members
+⏱️  Total time: 8.3 minutes
+⏱️  Avg wall-clock per member: 10s (throughput, not per-member compute)
+
+--- 3b, quintiles (tail) ---
+    source_icechunk_store:  /tank/projects/aifs-run/20261022_0000/icechunk_n3...
+    source_icechunk_ref:    cycle-20261022_0000
+    forecast_date:          20261022
+    precision:              FP16-v2
+
+💾 Step 4: Saving results...
+✅ Saved to /tank/projects/aifs-run/20261022_0000/aiwq/ensemble_quintile_probabilities_20261022_v2.nc (6.7 MB)
+
+📊 Step 5: Analysis Summary
+----------------------------------------
+Mode: FP16-v2
+Processed variables: ['2t_quintiles', 'tp_quintiles', 'msl_quintiles']
+Time periods: 2
+Grid resolution: 121x240
+
+Quintile probability statistics:
+
+  2t_quintiles:
+    Q1 (0.2): 0.123 mean probability
+    Q2 (0.4): 0.121 mean probability
+    Q3 (0.6): 0.139 mean probability
+    Q4 (0.8): 0.175 mean probability
+    Q5 (1.0): 0.441 mean probability
+
+  tp_quintiles:
+    Q1 (0.2): 0.239 mean probability
+    Q2 (0.4): 0.171 mean probability
+    Q3 (0.6): 0.172 mean probability
+    Q4 (0.8): 0.182 mean probability
+    Q5 (1.0): 0.236 mean probability
+
+  msl_quintiles:
+    Q1 (0.2): 0.205 mean probability
+    Q2 (0.4): 0.161 mean probability
+    Q3 (0.6): 0.162 mean probability
+    Q4 (0.8): 0.173 mean probability
+    Q5 (1.0): 0.299 mean probability
+
+📤 Step 6: Ready for AI Weather Quest submission
+   Output file: /tank/projects/aifs-run/20261022_0000/aiwq/ensemble_quintile_probabilities_20261022_v2.nc
+   Available variables: ['2t_quintiles', 'tp_quintiles', 'msl_quintiles']
+   Use submit_forecast() function to submit results
+
+================================================================================
+Validation before 3c
+================================================================================
+dims   time_week=2  quintile=5  latitude=121  longitude=240
+2t_quintiles     nan=0 min=0.0000 max=1.0000 sum=[1.000000,1.000000]
+tp_quintiles     nan=0 min=0.0000 max=1.0000 sum=[1.000000,1.000000]
+msl_quintiles    nan=0 min=0.0000 max=1.0000 sum=[1.000000,1.000000]
+weeks: 2026-11-09 (init+18), 2026-11-16 (init+25)
+
+================================================================================
+Official TS tercile bounds - fetched BEFORE ts_days.py this cycle
+================================================================================
+Downloaded via FTP: /climatologies/2026/TS_20yrCLIM_WEEKLYTSDAYS_terciles_20261109.nc
+20261109 {'tercile': 2, 'basin': 4}
+    ATL [0. 1.]
+    NWP [0. 3.]
+    SWIO [0. 0.]
+    SEIO [0. 0.]
+Downloaded via FTP: /climatologies/2026/TS_20yrCLIM_WEEKLYTSDAYS_terciles_20261116.nc
+20261116 {'tercile': 2, 'basin': 4}
+    ATL [0. 0.]
+    NWP [0. 2.]
+    SWIO [0. 2.]
+    SEIO [0. 0.]
+
+================================================================================
+3c - submit tas/mslp/pr
+================================================================================
+(aifs-gpu) ezra@e4drr-crafd-icpac:~/ea-aifs/fp16FahamuAIFSv2$ python -u ../shared/forecast_submission_cli.py --date 20261022 --v2 \
+    --output-dir $BASE/aiwq
+Loaded credentials from .env
+============================================================
+AI Weather Quest Forecast Submission (FP16-v2)
+============================================================
+
+Submitting 6 forecasts...
+  Team: Fahamu
+  Model: fp16FahamuAIFSv2
+  Date: 20261022
+  File: /tank/projects/aifs-run/20261022_0000/aiwq/ensemble_quintile_probabilities_20261022_v2.nc
+--------------------------------------------------
+
+[1/6] Submitting mslp_week1...
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+    Unique_ID           expver_ID         Teamname              Modelname
+[... AI_WQ registration table, 51 teams, printed before every upload ...]
+No changes - upload to CSV skipped
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+forecast submitted within competition time window
+Latitude found as 'latitude'
+Longitude found as 'longitude'
+Quintile found as 'quintile'
+All data is between 0 and 1.
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+    Unique_ID           expver_ID         Teamname              Modelname
+[... AI_WQ registration table, 51 teams, printed before every upload ...]
+No changes - upload to CSV skipped
+Creating directory '20261022'
+  Successfully submitted mslp_week1
+
+[2/6] Submitting mslp_week2...
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+    Unique_ID           expver_ID         Teamname              Modelname
+[... AI_WQ registration table, 51 teams, printed before every upload ...]
+No changes - upload to CSV skipped
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+forecast submitted within competition time window
+Latitude found as 'latitude'
+Longitude found as 'longitude'
+Quintile found as 'quintile'
+All data is between 0 and 1.
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+    Unique_ID           expver_ID         Teamname              Modelname
+[... AI_WQ registration table, 51 teams, printed before every upload ...]
+No changes - upload to CSV skipped
+Creating directory '20261022'
+  Successfully submitted mslp_week2
+
+[3/6] Submitting pr_week1...
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+    Unique_ID           expver_ID         Teamname              Modelname
+[... AI_WQ registration table, 51 teams, printed before every upload ...]
+No changes - upload to CSV skipped
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+forecast submitted within competition time window
+Latitude found as 'latitude'
+Longitude found as 'longitude'
+Quintile found as 'quintile'
+All data is between 0 and 1.
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+    Unique_ID           expver_ID         Teamname              Modelname
+[... AI_WQ registration table, 51 teams, printed before every upload ...]
+No changes - upload to CSV skipped
+Creating directory '20261022'
+  Successfully submitted pr_week1
+
+[4/6] Submitting pr_week2...
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+    Unique_ID           expver_ID         Teamname              Modelname
+[... AI_WQ registration table, 51 teams, printed before every upload ...]
+No changes - upload to CSV skipped
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+forecast submitted within competition time window
+Latitude found as 'latitude'
+Longitude found as 'longitude'
+Quintile found as 'quintile'
+All data is between 0 and 1.
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+    Unique_ID           expver_ID         Teamname              Modelname
+[... AI_WQ registration table, 51 teams, printed before every upload ...]
+No changes - upload to CSV skipped
+Creating directory '20261022'
+  Successfully submitted pr_week2
+
+[5/6] Submitting tas_week1...
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+    Unique_ID           expver_ID         Teamname              Modelname
+[... AI_WQ registration table, 51 teams, printed before every upload ...]
+No changes - upload to CSV skipped
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+forecast submitted within competition time window
+Latitude found as 'latitude'
+Longitude found as 'longitude'
+Quintile found as 'quintile'
+All data is between 0 and 1.
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+    Unique_ID           expver_ID         Teamname              Modelname
+[... AI_WQ registration table, 51 teams, printed before every upload ...]
+No changes - upload to CSV skipped
+Creating directory '20261022'
+  Successfully submitted tas_week1
+
+[6/6] Submitting tas_week2...
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+    Unique_ID           expver_ID         Teamname              Modelname
+[... AI_WQ registration table, 51 teams, printed before every upload ...]
+No changes - upload to CSV skipped
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+forecast submitted within competition time window
+Latitude found as 'latitude'
+Longitude found as 'longitude'
+Quintile found as 'quintile'
+All data is between 0 and 1.
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+    Unique_ID           expver_ID         Teamname              Modelname
+[... AI_WQ registration table, 51 teams, printed before every upload ...]
+No changes - upload to CSV skipped
+Creating directory '20261022'
+  Successfully submitted tas_week2
+
+============================================================
+SUBMISSION SUMMARY
+============================================================
+Mode: FP16-v2
+Date: 20261022
+Team: Fahamu
+Model: fp16FahamuAIFSv2
+Successful: 6
+Failed: 0
+
+================================================================================
+TS - storm-day tracker, with --aiwq-tercile-dir
+================================================================================
+(aifs-gpu) ezra@e4drr-crafd-icpac:~/ea-aifs/fp16FahamuAIFSv2$ python -u ts-mjo/ts_days.py --store $BASE/icechunk_n320_aiwq \
+    --tag cycle-20261022_0000 --init 20261022 --aiwq-tercile-dir $BASE/ts_terciles \
+    --out $BASE/ts_days_probs_20261022_tracked.nc
+  [2m2026-10-25T07:39:27.154584Z[0m [33m WARN[0m [1;33micechunk_arrow_object_store[0m[33m: [33mThe LocalFileSystem storage is not safe for concurrent commits. If more than one thread/process will attempt to commit at the same time, prefer using object stores.[0m
+    [2;3mat[0m icechunk-arrow-object-store/src/lib.rs:220
+
+TS days | init 2026-10-22 | members 50 | 2026-11-09 .. 2026-11-24
+  centres: msl<=band median-500 Pa and <=annulus mean-500 Pa, zeta850>=1.0e-04 1/s, warm core>=+1.0 K (T200-500 within 200 km minus annulus to 800 km), separation 500 km
+  tracks:  link <= 25 m/s, keep >= 24 h; count (track, day) pairs with max|V10| within 300 km >= 17.0 m/s
+  16 days -> 2 full 7-day windows, detection belt |lat|<=45 (379662 of 542080 points)
+    member 10/50 done (10 tracks)
+    member 20/50 done (11 tracks)
+    member 30/50 done (11 tracks)
+    member 40/50 done (6 tracks)
+    member 50/50 done (5 tracks)
+
+  !! degenerate terciles (lower == upper) for 2026-11-09/SWIO, 2026-11-09/SEIO, 2026-11-16/ATL, 2026-11-16/SEIO: under AI-WQ's partition every count lands in 'above' there, and its scorer masks the observation to NaN anyway (conditional_obs_probs `all_equal`), so those basin-weeks are NOT scoreable. The 0/0/1 emitted for them is arithmetic, not a forecast - it keeps the submission check's sum-to-1 satisfied.
+
+  wrote /tank/projects/aifs-run/20261022_0000/ts_days_probs_20261022_tracked.nc   (9.5 tracks/member)
+  week from 2026-11-09:
+    ATL   mean   0.8 d  range 0-6  terciles 0/1  P(below/near/above) = 0.00/0.62/0.38
+    NWP   mean   1.7 d  range 0-9  terciles 0/3  P(below/near/above) = 0.00/0.72/0.28
+    SWIO  mean   0.5 d  range 0-5  terciles 0/0  P(below/near/above) = 0.00/0.00/1.00
+    SEIO  mean   0.3 d  range 0-2  terciles 0/0  P(below/near/above) = 0.00/0.00/1.00
+  week from 2026-11-16:
+    ATL   mean   1.1 d  range 0-4  terciles 0/0  P(below/near/above) = 0.00/0.00/1.00
+    NWP   mean   3.6 d  range 0-13  terciles 0/2  P(below/near/above) = 0.00/0.46/0.54
+    SWIO  mean   0.2 d  range 0-3  terciles 0/2  P(below/near/above) = 0.00/0.94/0.06
+    SEIO  mean   0.1 d  range 0-4  terciles 0/0  P(below/near/above) = 0.00/0.00/1.00
+
+================================================================================
+MJO - VPM on the O96 corpus, RMM-fitted basis
+================================================================================
+(aifs-gpu) ezra@e4drr-crafd-icpac:~/ea-aifs/fp16FahamuAIFSv2$ python -u ts-mjo/vpm_index.py --store $BASE/icechunk_o96 --init 20261022 \
+    --clim .../vpm_clim_1991_2020.npz --eofs .../rmm_basis.npz \
+    --dump-bands /tank/projects/mjo_model_clim/bands_20261022.npz \
+    --out $BASE/mjo_probs_20261022.nc
+  [2m2026-10-25T07:39:32.231275Z[0m [33m WARN[0m [1;33micechunk_arrow_object_store[0m[33m: [33mThe LocalFileSystem storage is not safe for concurrent commits. If more than one thread/process will attempt to commit at the same time, prefer using object stores.[0m
+    [2;3mat[0m icechunk-arrow-object-store/src/lib.rs:220
+
+VPM | init 2026-10-22 | members 50 | 2026-10-22 .. 2026-11-24 | 132 steps
+  chi200: divergence on the regular grid -> 1.5 deg Poisson solve; U850/U200 banded on the regular grid
+    member 10/50 done
+    member 20/50 done
+    member 30/50 done
+    member 40/50 done
+    member 50/50 done
+  removed calendar-day climatology /tank/projects/era5_vpm_clim/vpm_clim_1991_2020.npz (days 294..327)
+  !! no --lowfreq: the preceding 120-day mean is not removed
+  normalisation (std per field): chi200=4.912e+06, u850=1.939e+00, u200=5.491e+00   [FIXED, from /tank/projects/era5_vpm_clim/rmm_basis.npz]
+    this forecast's own would have been: chi200=6.862e+06, u850=3.035e+00, u200=7.334e+00  -- ratios 1.40, 1.56, 1.34
+  wrote bands -> /tank/projects/mjo_model_clim/bands_20261022.npz
+  applied basis intercept (+0.0545, +0.0263)
+  basis is a REGRESSION onto PSL's published VPM, not an EOF: e1.e2=-124.3 (not orthogonal, as expected)
+
+  wrote /tank/projects/aifs-run/20261022_0000/mjo_probs_20261022.nc
+
+amplitude mean 2.59   P(amp<1) 0.009   modal phase 8 on all 34 days
+
+================================================================================
+TS + MJO submission - run CONCURRENTLY with 3c on the user's instruction
+================================================================================
+(aifs-gpu) ezra@e4drr-crafd-icpac:~/ea-aifs/fp16FahamuAIFSv2$ python -u submit_ts_mjo_cli.py --date 20261022 \
+    --ts-nc $BASE/ts_days_probs_20261022_tracked.nc --tercile-dir $BASE/ts_terciles \
+    --mjo-nc $BASE/mjo_probs_20261022.nc --dry-run
+team=Fahamu  model=fp16FahamuAIFSv2  init=20261022  cred=ecbox token   [DRY RUN]
+
+TS period 1  (days 18-24, valid week 2026-11-09)
+    ATL   bounds    0/   1  mean  0.78 days  P(below,near,above) = 0.00,0.62,0.38
+    NWP   bounds    0/   3  mean  1.72 days  P(below,near,above) = 0.00,0.72,0.28
+    SWIO  bounds    0/   0  mean  0.48 days  P(below,near,above) = 0.33,0.33,0.33  [inactive -> uniform 1/3]
+    SEIO  bounds    0/   0  mean  0.28 days  P(below,near,above) = 0.33,0.33,0.33  [inactive -> uniform 1/3]
+    active columns ['ATL', 'NWP'] sum to [1. 1.]
+
+TS period 2  (days 25-31, valid week 2026-11-16)
+    ATL   bounds    0/   0  mean  1.12 days  P(below,near,above) = 0.00,0.00,1.00
+    NWP   bounds    0/   2  mean  3.56 days  P(below,near,above) = 0.00,0.46,0.54
+    SWIO  bounds    0/   2  mean  0.20 days  P(below,near,above) = 0.33,0.33,0.33  [inactive -> uniform 1/3]
+    SEIO  bounds    0/   0  mean  0.12 days  P(below,near,above) = 0.33,0.33,0.33  [inactive -> uniform 1/3]
+    active columns ['ATL', 'NWP'] sum to [1. 1.]
+
+MJO  valid 2026-10-29, 2026-11-05, 2026-11-12, 2026-11-19  (init +7/14/21/28)
+    modal category per lag: [8, 8, 8, 8]
+    P(inactive):            [0.   0.02 0.   0.02]
+    !! miscalibrated -- see MJO_METHOD.md section 5
+
+DRY RUN: nothing submitted.
+
+*** NOTE: SWIO week 2 has non-degenerate published bounds (0/2) and ts_days.py
+*** produced a real forecast for it (0.00/0.94/0.06), but the activation table
+*** (SWIO active months 12/1/2) overwrote it with uniform 1/3. Open question --
+*** resolve before the December cycles.
+
+(aifs-gpu) ezra@e4drr-crafd-icpac:~/ea-aifs/fp16FahamuAIFSv2$ python -u submit_ts_mjo_cli.py --date 20261022 \
+    --ts-nc ... --tercile-dir ... --mjo-nc ...      # no --dry-run
+team=Fahamu  model=fp16FahamuAIFSv2  init=20261022  cred=ecbox token
+
+TS period 1  (days 18-24, valid week 2026-11-09)
+    ATL   bounds    0/   1  mean  0.78 days  P(below,near,above) = 0.00,0.62,0.38
+    NWP   bounds    0/   3  mean  1.72 days  P(below,near,above) = 0.00,0.72,0.28
+    SWIO  bounds    0/   0  mean  0.48 days  P(below,near,above) = 0.33,0.33,0.33  [inactive -> uniform 1/3]
+    SEIO  bounds    0/   0  mean  0.28 days  P(below,near,above) = 0.33,0.33,0.33  [inactive -> uniform 1/3]
+    active columns ['ATL', 'NWP'] sum to [1. 1.]
+
+TS period 2  (days 25-31, valid week 2026-11-16)
+    ATL   bounds    0/   0  mean  1.12 days  P(below,near,above) = 0.00,0.00,1.00
+    NWP   bounds    0/   2  mean  3.56 days  P(below,near,above) = 0.00,0.46,0.54
+    SWIO  bounds    0/   2  mean  0.20 days  P(below,near,above) = 0.33,0.33,0.33  [inactive -> uniform 1/3]
+    SEIO  bounds    0/   0  mean  0.12 days  P(below,near,above) = 0.33,0.33,0.33  [inactive -> uniform 1/3]
+    active columns ['ATL', 'NWP'] sum to [1. 1.]
+
+MJO  valid 2026-10-29, 2026-11-05, 2026-11-12, 2026-11-19  (init +7/14/21/28)
+    modal category per lag: [8, 8, 8, 8]
+    P(inactive):            [0.   0.02 0.   0.02]
+    !! miscalibrated -- see MJO_METHOD.md section 5
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+    Unique_ID           expver_ID         Teamname              Modelname
+[... AI_WQ registration table, 51 teams, printed before every upload ...]
+No changes - upload to CSV skipped
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+forecast submitted within competition time window
+Tercile found as 'tercile'
+All data is between 0 and 1.
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+    Unique_ID           expver_ID         Teamname              Modelname
+[... AI_WQ registration table, 51 teams, printed before every upload ...]
+No changes - upload to CSV skipped
+Creating directory '20261022'
+  submitted TS period 1
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+    Unique_ID           expver_ID         Teamname              Modelname
+[... AI_WQ registration table, 51 teams, printed before every upload ...]
+No changes - upload to CSV skipped
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+forecast submitted within competition time window
+Tercile found as 'tercile'
+All data is between 0 and 1.
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+    Unique_ID           expver_ID         Teamname              Modelname
+[... AI_WQ registration table, 51 teams, printed before every upload ...]
+No changes - upload to CSV skipped
+Creating directory '20261022'
+  submitted TS period 2
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+    Unique_ID           expver_ID         Teamname              Modelname
+[... AI_WQ registration table, 51 teams, printed before every upload ...]
+No changes - upload to CSV skipped
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+forecast submitted within competition time window
+All data is between 0 and 1.
+Fahamu is registered to the AI Weather Quest. You may submit your forecast.
+fp16FahamuAIFSv2 is registered to the AI Weather Quest. You may submit your forecast.
+    Unique_ID           expver_ID         Teamname              Modelname
+[... AI_WQ registration table, 51 teams, printed before every upload ...]
+No changes - upload to CSV skipped
+Creating directory '20261022'
+  submitted MJO period 1
+
+3/3 submitted
+
+================================================================================
+Verification against the server - paginated, NOT AI_WQ_check_submission
+================================================================================
+(aifs-gpu) ezra@e4drr-crafd-icpac:~/ea-aifs/fp16FahamuAIFSv2$ python check_submissions_paged.py --date 20261022      # 08:30 UTC, 3c mid-upload
+20261022: 270 files across 3 page(s)
+  MISSING  tas  p1
+  MISSING  tas  p2
+  OK   mslp p1
+  OK   mslp p2
+  OK   pr   p1
+  OK   pr   p2
+  OK   TS   p1
+  OK   TS   p2
+  OK   MJO  p1
+
+7/9 present
+
+(aifs-gpu) ezra@e4drr-crafd-icpac:~/ea-aifs/fp16FahamuAIFSv2$ python check_submissions_paged.py --date 20261022      # 08:54 UTC, 3c done
+20261022: 272 files across 3 page(s)
+  OK   tas  p1
+  OK   tas  p2
+  OK   mslp p1
+  OK   mslp p2
+  OK   pr   p1
+  OK   pr   p2
+  OK   TS   p1
+  OK   TS   p2
+  OK   MJO  p1
+
+9/9 present
+
+272 files across 3 pages: the official single-page AI_WQ_check_submission would report
+every lowercase filename absent here. See run_commands_20261008.md.
