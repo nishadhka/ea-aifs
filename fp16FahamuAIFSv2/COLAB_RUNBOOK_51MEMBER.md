@@ -218,8 +218,12 @@ ended at ~24 h and took the only copy of its outputs with it. **Put every produc
 bucket as soon as it is made.** Never leave the sole copy on a VM.
 
 **Trap 4 — idle GPUs are the largest avoidable cost.** On one 271-member cycle, 19.4 CU — a
-quarter of the total — went on runtimes left up after their workers exited. Use the watcher
-(§4.2), which stops each runtime when its worker finishes.
+quarter of the total — went on runtimes left up after their workers exited. A later cycle lost
+~10 h of three idle runtimes a different way: transient object-store 5xx responses killed all
+three workers, and nothing was watching for a worker that had *crashed* rather than finished.
+Use the watcher (§4.2): it stops a runtime whose worker has exited for either reason, and
+downloads retry transient 5xx rather than failing the member. **Never leave GPU runtimes
+unwatched**, and check `colab usage` reads zero before you walk away.
 
 ---
 
@@ -312,7 +316,8 @@ Wait for the setup success line on each, then start the workers:
 for n in gpu1 gpu2 gpu3; do $B/hc_colab.sh sh $n 'tail -2 /content/setup.log'; done
 
 for n in gpu1 gpu2 gpu3; do $B/hc_colab.sh worker $n $MMDD --years $YEAR --members 1-51; done
-# stops each runtime when its worker finishes, and refreshes credentials on each pass
+# stops each runtime whose worker has exited (finished OR crashed), and refreshes
+# credentials on each pass
 $B/hc_watch_stop.sh $MMDD gpu1 gpu2 gpu3
 ```
 
