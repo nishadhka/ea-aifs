@@ -388,3 +388,32 @@ inputs from ~284 GB to ~40 GB per date, for ~+6 CU per cycle (~1 min of CPU per 
 | stale CLAIM of a member waited out for up to 3 h | ~6 CU | worker claim TTL lowered from 3 h to 45 min (a member takes ~9 min) |
 | L4s started before the hindcast pkls existed (MARS tape) | ~18 CU | start the L4s when the real-time and first hindcast years are on source.coop, or start one L4 first |
 | CPU runtime ended at ~24 h with truth only on its disk | index truth (~120 CDS requests) lost | every product saved to source.coop when made |
+
+### 10.5 Idle compute on the 12 Nov and 19 Nov cycles (estimated 2026-11-24)
+
+From the member timings (`timing.json`), session start/stop times and the balance history.
+12 Nov is measured; 19 Nov is estimated (CPU-runtime lifetimes and the exact crash times are
+not recorded), ±10 CU.
+
+| | 12 Nov | 19 Nov |
+|---|---|---|
+| Total spent | 128.4 CU | 182.0 CU (325.95 → 143.93) |
+| L4 GPU-hours billed | 62.5 h | ~89 h |
+| L4 hours running members | 39.8 h | ~40.5 h (271 + a few re-runs) |
+| **Idle L4** | **22.7 GPU-h ≈ 44 CU** | **~49 GPU-h ≈ 95 CU** |
+| Idle CPU runtime | ~5 CU | ~5 CU |
+| **Idle total** | **~49 CU (~$5)** | **~100 CU (~$10)** |
+
+Over the two cycles ~150 CU (~$15) went on idle runtimes, about as much as the ~157 CU of
+useful GPU work.
+
+| Cause | 12 Nov | 19 Nov | Status |
+|---|---|---|---|
+| L4s left on after their last member | 19 CU | — | fixed: `hc_watch_stop.sh` |
+| all three workers crashed on a source.coop 520/525 (no retry); watcher waited for a summary line a crashed worker never writes | — | ~62 CU | fixed (d7d1348): `sc_io.get` retries, worker survives a failed member, watcher stops on any worker exit |
+| waiting for pkls (MARS tape), stale 3 h claims, setup | ~18 CU | ~21 CU | claim TTL 45 min; start L4s when pkls exist |
+| **gaps between members: picking checked each candidate's DONE marker with its own request** — ~1 min per member early on, ~5 min when ~200 members were done | ~7 CU | ~13 CU | **fixed 2026-11-24**: one listing of `hc-products/<MMDD>/` per pick (`status()` in `hc_gpu_worker.py`) |
+
+Measured for the fix, on the finished 19 Nov products from the gateway: one listing of all
+271 DONE markers took 4.8 s; the old per-member checks took 1.0 s each, ~276 s per pick.
+The remaining avoidable cost per cycle is mainly L4s started before their pkls exist.

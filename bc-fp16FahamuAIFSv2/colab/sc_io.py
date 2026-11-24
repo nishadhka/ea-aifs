@@ -69,10 +69,13 @@ def size(key):
         return None
 
 
-def ls(prefix):
+def ls(prefix, with_time=False):
+    """[(key, size)] or, with_time, [(key, size, last-modified epoch seconds)]."""
     out = []
     for pg in _anon().get_paginator("list_objects_v2").paginate(Bucket=BUCKET, Prefix=prefix):
-        out += [(o["Key"], o["Size"]) for o in pg.get("Contents", [])]
+        for o in pg.get("Contents", []):
+            out.append((o["Key"], o["Size"], o["LastModified"].timestamp()) if with_time
+                       else (o["Key"], o["Size"]))
     return out
 
 

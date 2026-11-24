@@ -75,6 +75,23 @@ def todo(mmdd, years, members):
     return sorted(items, key=lambda t: (-t[0], t[1]))
 
 
+def status(mmdd):
+    """One listing of hc-products/<MMDD>/ -> (done {(y, n)}, claims {(y, n): age s}).
+    Picking used to check each candidate's DONE marker with its own request, ~200 requests
+    per pick late in a cycle (~5 min idle GPU between members on 2026-11-22)."""
+    pat = re.compile(rf"hc-products/{mmdd}/(\d{{4}})/m(\d{{3}})/(DONE|CLAIM)$")
+    done, claims, now = set(), {}, time.time()
+    for key, _, t in sc_io.ls(f"{sc_io.BASE}/hc-products/{mmdd}/", with_time=True):
+        m = pat.search(key)
+        if m:
+            yn = (int(m.group(1)), int(m.group(2)))
+            if m.group(3) == "DONE":
+                done.add(yn)
+            else:
+                claims[yn] = now - t
+    return done, claims
+
+
 def _read_claim(prefix):
     """CLAIM body via the S3 API (not the public URL, which may be cached), or None."""
     try:
@@ -196,9 +213,12 @@ if __name__ == "__main__":
     idle_since = None
     while True:
         picked = None
+        done, claims = status(a.mmdd)       # one listing, not one request per member
         for y, n, key in todo(a.mmdd, years, members):
             if (y, n) in failed:          # failed in this process: leave it for a rerun
                 continue
+            if (y, n) in done or claims.get((y, n), a.claim_ttl) < a.claim_ttl:
+                continue                  # finished, or claimed recently by another worker
             if claim(sc_io.product_prefix(a.mmdd, y, n), a.claim_ttl):
                 picked = (y, n, key)
                 break
