@@ -75,7 +75,11 @@ case $CMD in
     if [ -f "$RC" ]; then $SSH 'umask 077; cat > /root/.cdsapirc' < "$RC"; echo "CDS key pushed"; fi ;;
   creds)
     source-coop creds --format env >/dev/null 2>&1 || { echo "source-coop creds failed: log in again"; exit 1; }
-    source-coop creds --format env 2>/dev/null | $SSH 'umask 077; cat > /root/.sc.env; echo "source.coop credentials in /root/.sc.env"'
+    # atomic: write a temp file, move it into place only if it holds a key -- a plain
+    # `cat > .sc.env` emptied the file while a worker read it (KeyError, worker exited, 2026-11-28)
+    C=$(source-coop creds --format env 2>/dev/null)
+    echo "$C" | grep -q AWS_ACCESS_KEY_ID || { echo "source-coop creds returned no key; not pushed"; exit 1; }
+    echo "$C" | $SSH 'umask 077; cat > /root/.sc.env.tmp && grep -q AWS_ACCESS_KEY_ID /root/.sc.env.tmp && mv /root/.sc.env.tmp /root/.sc.env && echo "source.coop credentials in /root/.sc.env"'
     source-coop creds 2>/dev/null | python3 -c "import json,sys; print('expire', json.load(sys.stdin)['Expiration'])" ;;
   sh)     $SSH "$1" </dev/null ;;
   phaseA)

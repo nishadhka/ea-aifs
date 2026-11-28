@@ -219,7 +219,13 @@ if __name__ == "__main__":
                 continue
             if (y, n) in finished or claims.get((y, n), a.claim_ttl) < a.claim_ttl:
                 continue                  # finished, or claimed recently by another worker
-            if claim(sc_io.product_prefix(a.mmdd, y, n), a.claim_ttl):
+            try:
+                got = claim(sc_io.product_prefix(a.mmdd, y, n), a.claim_ttl)
+            except Exception as e:            # e.g. credentials file mid-refresh: try next
+                print(f"  claim {y} m{n:03d}: {type(e).__name__} {str(e)[:100]}", flush=True)
+                time.sleep(10)
+                got = False
+            if got:
                 picked = (y, n, key)
                 break
         if not picked:
