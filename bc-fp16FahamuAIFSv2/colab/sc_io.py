@@ -79,13 +79,30 @@ def ls(prefix, with_time=False):
     return out
 
 
+# The bucket behind data.source.coop, read directly (anonymous, path-style). From Colab's
+# Asian regions the data.source.coop proxy answered every pkl download with HTTP 520
+# (2026-11-28, Singapore L4s), while the same GET worked from US runtimes and directly from S3.
+DIRECT_ENDPOINT = "https://s3.us-west-2.amazonaws.com"
+DIRECT_BUCKET = "us-west-2.opendata.source.coop"
+
+
+def _direct():
+    return boto3.client("s3", endpoint_url=DIRECT_ENDPOINT, region_name="us-west-2",
+                        config=Config(signature_version=UNSIGNED, s3={"addressing_style": "path"},
+                                      retries={"max_attempts": 10, "mode": "adaptive"}))
+
+
 def get(key, path, tries=6):
-    """Download with retries: source.coop answers transient 520/525 (2026-11-20 they killed
-    all three GPU workers, whose runtimes then idled ~10 h)."""
+    """Download with retries: direct S3 first, the data.source.coop proxy as fallback
+    (proxy 520/525 killed all three GPU workers on 2026-11-20 and blocked them on 2026-11-28)."""
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     for i in range(tries):
         try:
-            _anon().download_file(BUCKET, key, path, Config=XFER)
+            try:
+                _direct().download_file(DIRECT_BUCKET, f"{BUCKET}/{key}", path, Config=XFER)
+            except Exception as e:
+                print(f"  get {key}: direct S3 {type(e).__name__}; via data.source.coop", flush=True)
+                _anon().download_file(BUCKET, key, path, Config=XFER)
             return path
         except Exception as e:
             if i == tries - 1:
