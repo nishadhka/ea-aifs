@@ -213,11 +213,11 @@ if __name__ == "__main__":
     idle_since = None
     while True:
         picked = None
-        done, claims = status(a.mmdd)       # one listing, not one request per member
+        finished, claims = status(a.mmdd)   # one listing, not one request per member
         for y, n, key in todo(a.mmdd, years, members):
             if (y, n) in failed:          # failed in this process: leave it for a rerun
                 continue
-            if (y, n) in done or claims.get((y, n), a.claim_ttl) < a.claim_ttl:
+            if (y, n) in finished or claims.get((y, n), a.claim_ttl) < a.claim_ttl:
                 continue                  # finished, or claimed recently by another worker
             if claim(sc_io.product_prefix(a.mmdd, y, n), a.claim_ttl):
                 picked = (y, n, key)
